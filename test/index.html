@@ -314,6 +314,26 @@ function newSim(produit,mv,over){
   return Object.assign({id:uid(),kind:'sim',produit,label:'',mv,capital:mv==='mensuel'?0:10000,mensuel:mv==='capital'?0:200,idxOn:false,idx:2,
     mr:'auto',fixe:500,r:2,rt:'net',fg:1.2,fv:1.5,fisc:false,ps:17.2},over||{});
 }
+/* ===== SCPI : mémo « tableau simplifié », lu tel quel =====
+   [montant du projet, apport, participation 15 ans, revenus 15 ans, participation 20 ans, revenus 20 ans, participation 25 ans, revenus 25 ans] */
+const SCPI_TABLE=[
+[33600,3600,107,181,66,186,null,null],[40000,4000,130,216,80,221,51,227],[50000,5000,162,269,100,276,64,283],
+[60000,6000,194,194,120,331,77,340],[70000,7000,227,377,140,387,90,396],[80000,8000,259,431,160,442,103,453],
+[90000,9000,291,485,180,497,115,510],[100000,10000,534,539,200,552,128,566],[110000,11000,356,593,220,608,141,623],
+[120000,12000,389,647,240,663,154,680],[130000,13000,421,700,260,718,167,736],[140000,14000,454,754,280,773,179,793],
+[150000,15000,486,808,300,829,192,850],[160000,16000,518,518,320,884,205,906],[170000,17000,551,916,340,939,218,963],
+[180000,18000,583,970,360,994,231,1020],[190000,19000,616,1024,380,1050,243,1076],[200000,20000,648,1078,400,1105,256,1133],
+[210000,21000,680,1132,420,1160,269,1189],[220000,22000,713,1185,440,1215,282,1246],[230000,23000,745,1239,460,1271,295,1303],
+[240000,24000,778,1293,480,1326,308,1359],[250000,25000,810,1347,500,1381,320,1416],[260000,26000,842,1401,520,1436,333,1473],
+[270000,27000,875,1455,540,1492,346,1529],[280000,28000,907,1509,560,1547,359,1586],[290000,29000,940,1563,580,1602,372,1643],
+[300000,30000,972,1617,600,1657,384,1699]];
+const SCPI_COL={15:2,20:4,25:6};
+function scpiLook(L){
+  const row=SCPI_TABLE.find(r=>r[0]===+L.projet);const k=SCPI_COL[+L.duree]||6;
+  if(!row||row[k]==null)return null;
+  return {projet:row[0],apport:row[1],part:row[k],rev:row[k+1]};
+}
+function newScpi(over){return Object.assign({id:uid(),kind:'scpi',label:'',duree:25,projet:50000},over||{});}
 function newManual(over){return Object.assign({id:uid(),kind:'manuel',label:'Immobilier',mensuel:70,capital:4400,capRetraite:44000,revenu:283,debutAge:49,sub:''},over||{});}
 function newClient(){
   return {id:uid(),nom:'Nouveau client',createdAt:Date.now(),updatedAt:Date.now(),profil:'seul',
@@ -326,13 +346,14 @@ function exampleClient(){
   return c;
 }
 function leverLabel(L){
+  if(L.kind==='scpi')return (L.label&&L.label.trim())?L.label.trim():'SCPI';
   if(L.label&&L.label.trim())return L.label.trim();
   if(L.kind==='manuel')return 'Levier manuel';
   const p=L.produit==='PER'?'PER':'Assurance vie';
   return `${p} (${L.mv==='capital'?'Capital':L.mv==='mensuel'?'Epargne':'Capital + Epargne'})`;
 }
-const monthlyOf=L=>L.kind==='manuel'?(+L.mensuel||0):(L.mv==='capital'?0:(+L.mensuel||0));
-const capitalOf=L=>L.kind==='manuel'?(+L.capital||0):(L.mv==='mensuel'?0:(+L.capital||0));
+const monthlyOf=L=>L.kind==='scpi'?((scpiLook(L)||{}).part||0):L.kind==='manuel'?(+L.mensuel||0):(L.mv==='capital'?0:(+L.mensuel||0));
+const capitalOf=L=>L.kind==='scpi'?((scpiLook(L)||{}).apport||0):L.kind==='manuel'?(+L.capital||0):(L.mv==='mensuel'?0:(+L.capital||0));
 
 /* ================= age / timeline ================= */
 function ageM(p){
@@ -402,6 +423,7 @@ function taxRow(row,L,ctx){
 }
 /* unified output of one lever (optionally with triptyque overrides) */
 function leverOut(L,ctx,ov){
+  if(L.kind==='scpi'){const t=scpiLook(L)||{projet:+L.projet||0,apport:0,part:0,rev:0};return {mensuel:t.part,capital:t.apport,capR:t.projet,W:t.rev,debutAge:Math.floor(ctx.a1/12)+(+L.duree||0),scpi:t};}
   if(L.kind==='manuel')return {mensuel:+L.mensuel||0,capital:+L.capital||0,capR:+L.capRetraite||0,W:+L.revenu||0,debutAge:+L.debutAge||0};
   const useFixed=L.mr==='fixe'&&!ov;
   const r=simulate(L,ctx,{W:useFixed?(+L.fixe||0):null,ov});
@@ -453,7 +475,7 @@ function triCompute(c,ctx){
   return rows.map(r=>{
     let m=0,k=0,w=0;const cells={};
     c.levers.forEach(L=>{const it=r[L.id];if(!it||!it.on){cells[L.id]=null;return;}
-      const full=L.kind==='manuel'||(Math.round(it.mensuel)===Math.round(monthlyOf(L))&&Math.round(it.capital)===Math.round(capitalOf(L)));
+      const full=L.kind!=='sim'||(Math.round(it.mensuel)===Math.round(monthlyOf(L))&&Math.round(it.capital)===Math.round(capitalOf(L)));
       const o=leverOut(L,ctx,full?null:{mensuel:it.mensuel,capital:it.capital});
       cells[L.id]=o;m+=o.mensuel;k+=o.capital;w+=o.W;});
     return {mensuel:m,capital:k,W:w,cells};
@@ -707,12 +729,14 @@ function renderLevers(c,ctx,body){
       <button class="btn sm" type="button" data-add="AV-capital">Assurance vie capital</button>
       <button class="btn sm" type="button" data-add="PER-mensuel">PER épargne</button>
       <button class="btn sm" type="button" data-add="PER-capital">PER capital</button>
-      <button class="btn sm" type="button" data-add="manuel">Immobilier / SCPI / autre</button>
+      <button class="btn sm" type="button" data-add="scpi">SCPI à crédit</button>
+      <button class="btn sm" type="button" data-add="manuel">Immobilier / autre (manuel)</button>
     </div>
     <div id="ledit"></div>`;
   body.querySelectorAll('[data-add]').forEach(b=>b.onclick=()=>{
     const a=b.dataset.add;let L;
-    if(a==='manuel')L=newManual({label:'Immobilier',mensuel:0,capital:0,capRetraite:0,revenu:0,debutAge:+c.retraite||0});
+    if(a==='scpi')L=newScpi();
+    else if(a==='manuel')L=newManual({label:'Immobilier',mensuel:0,capital:0,capRetraite:0,revenu:0,debutAge:+c.retraite||0});
     else{const [p,mv]=a.split('-');L=newSim(p,mv);}
     c.levers.push(L);S.lever=L.id;touch();renderTabs();renderLevers(c,ctxOf(c),body);
   });
@@ -724,7 +748,7 @@ function renderLeverStrip(c,ctx){
   el.innerHTML=c.levers.map(L=>{
     let f='';
     if(!ctx.errs.length){const o=leverOut(L,ctx);f=`${esc(versText(o))} · <b>${kEur(o.capR)}</b> · <b>${eurm(o.W)}</b>`;}
-    const pill=L.kind==='manuel'?'Manuel':L.produit;
+    const pill=L.kind==='manuel'?'Manuel':L.kind==='scpi'?'SCPI':L.produit;
     return `<button type="button" class="lcard" aria-pressed="${L.id===S.lever}" data-l="${L.id}"><span class="t"><span>${esc(leverLabel(L))}</span><span class="pill">${pill}</span></span><span class="f">${f}</span></button>`;
   }).join('');
   el.querySelectorAll('[data-l]').forEach(b=>b.onclick=()=>{S.lever=b.dataset.l;renderLeverStrip(c,ctxOf(c));renderLeverEditor(c,ctxOf(c));});
@@ -738,7 +762,17 @@ function renderLeverEditor(c,ctx){
   const box=$('ledit');if(!box)return;const L=curLever(c);
   if(!L){box.innerHTML='';return;}
   const actions=`<section class="grp" style="padding-bottom:0"><div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" class="btn" id="lDup">Dupliquer le levier</button><button type="button" class="btn danger" id="lDel">Supprimer le levier</button></div></section>`;
-  if(L.kind==='manuel'){
+  if(L.kind==='scpi'){
+    const col=SCPI_COL[+L.duree]||6;
+    box.innerHTML=`<div class="app"><form class="panel" id="lform" novalidate autocomplete="off">
+      <section class="grp"><h2>SCPI à crédit</h2>
+        <div class="field"><label for="l-label">Nom affiché</label><div class="inp"><input id="l-label" type="text" value="${esc(L.label)}" placeholder="SCPI"></div></div>
+        <div class="field"><span class="lbl">Durée du crédit</span>${seg('l-duree',[['15','15 ans'],['20','20 ans'],['25','25 ans']],String(L.duree))}</div>
+        <div class="field"><label for="l-projet">Montant du projet</label><div class="inp"><select id="l-projet" style="border:0;background:transparent;padding:8px 10px;width:100%;font:inherit;font-weight:600;color:var(--ink)">${SCPI_TABLE.map(r=>`<option value="${r[0]}" ${r[0]===+L.projet?'selected':''} ${r[col]==null?'disabled':''}>${eur(r[0])} · apport ${eur(r[1])}${r[col]!=null?` · ${r[col]} €/m`:' · non proposé'}</option>`).join('')}</select></div></div>
+        <p class="note">Valeurs lues dans le mémo « tableau simplifié pour vos projets SCPI » (rentabilité 6 % avant imposition).</p>
+      </section>${actions}</form>
+      <div class="results" id="lres"></div></div>`;
+  }else if(L.kind==='manuel'){
     box.innerHTML=`<div class="app"><form class="panel" id="lform" novalidate autocomplete="off">
       <section class="grp"><h2>Levier saisi à la main</h2>
         <div class="field"><label for="l-label">Nom affiché</label><div class="inp"><input id="l-label" type="text" value="${esc(L.label)}" placeholder="Immobilier, SCPI…"></div></div>
@@ -797,7 +831,9 @@ function bindLeverForm(c,L){
   f.addEventListener('input',e=>{
     const t=e.target,k=(t.name||t.id).replace(/^l-/,'');
     const map={label:'label',mensuel:'mensuel',capital:'capital',capR:'capRetraite',rev:'revenu',deb:'debutAge',sub:'sub',idx:'idx',fixe:'fixe',r:'r',fg:'fg',fv:'fv',ps:'ps'};
-    if(k==='prod')L.produit=t.value;else if(k==='mv')L.mv=t.value;else if(k==='mr')L.mr=t.value;else if(k==='rt')L.rt=t.value;
+    if(k==='duree'){L.duree=+t.value;if(!scpiLook(L)){const r=SCPI_TABLE.find(r=>r[SCPI_COL[L.duree]]!=null);if(r)L.projet=r[0];}renderLeverEditor(c,ctxOf(c));touch();renderLeverStrip(c,ctxOf(c));return;}
+    else if(k==='projet')L.projet=+t.value;
+    else if(k==='prod')L.produit=t.value;else if(k==='mv')L.mv=t.value;else if(k==='mr')L.mr=t.value;else if(k==='rt')L.rt=t.value;
     else if(k==='idxOn')L.idxOn=t.checked;else if(k==='fisc')L.fisc=t.checked;
     else if(map[k])L[map[k]]=(k==='label'||k==='sub')?t.value:numv(t.value);
     syncLeverVis(L);touch();const ctx=ctxOf(c);renderLeverStrip(c,ctx);renderLeverResults(c,ctx);
@@ -814,6 +850,22 @@ function bindLeverForm(c,L){
 function renderLeverResults(c,ctx){
   const box=$('lres');if(!box)return;const L=curLever(c);if(!L)return;
   if(ctx.errs.length){box.innerHTML=`<div class="alert err"><span class="dot"></span><span>${esc(ctx.errs.join(' '))} Corrigez le profil du client ci-dessus.</span></div>`;return;}
+  if(L.kind==='scpi'){
+    const t=scpiLook(L);if(!t){box.innerHTML='<div class="alert warn"><span class="dot"></span><span>Ce montant n\'est pas proposé pour cette durée.</span></div>';return;}
+    const deb=Math.floor(ctx.a1/12)+(+L.duree);const col=SCPI_COL[+L.duree];
+    box.innerHTML=`<section class="hero"><p class="eyebrow">${esc(leverLabel(L))} · crédit sur ${L.duree} ans</p>
+      <div class="big"><span class="n">${fE.format(t.rev)} €</span><span class="u">/ mois à partir de ${deb} ans</span></div>
+      <p class="thesis">Projet de ${eur(t.projet)} : apport de ${eur(t.apport)} et participation de ${eurm(t.part)} pendant ${L.duree} ans, puis ${eurm(t.rev)} de revenus.</p></section>
+      <section class="kpis">
+        <div class="kpi"><span class="k">Montant du projet</span><span class="v">${eur(t.projet)}</span><span class="s">capital hors plus-value</span></div>
+        <div class="kpi"><span class="k">Apport</span><span class="v">${eur(t.apport)}</span><span class="s">10 % du projet</span></div>
+        <div class="kpi"><span class="k">Participation</span><span class="v">${eurm(t.part)}</span><span class="s">pendant ${L.duree} ans</span></div>
+        <div class="kpi"><span class="k">Revenus</span><span class="v">${eurm(t.rev)}</span><span class="s">à partir de ${deb} ans</span></div>
+      </section>
+      <details class="tbl"><summary>Mémo SCPI · crédit ${L.duree} ans</summary><div class="tbl-scroll"><table class="yr"><thead><tr><th>Montant du projet</th><th>Apport</th><th>Participation</th><th>Revenus à ${L.duree} ans</th></tr></thead><tbody>${SCPI_TABLE.filter(r=>r[col]!=null).map(r=>`<tr${r[0]===t.projet?' style="font-weight:800;background:var(--navy-soft)"':''}><td>${eur(r[0])}</td><td>${eur(r[1])}</td><td>${eurm(r[col])}</td><td>${eurm(r[col+1])}</td></tr>`).join('')}</tbody></table></div></details>
+      <p class="disc">Chiffres repris du mémo, sans recalcul. Rentabilité de 6 % avant imposition.</p>`;
+    return;
+  }
   if(L.kind==='manuel'){
     box.innerHTML=`<section class="hero"><p class="eyebrow">${esc(leverLabel(L))} · saisie manuelle</p>
       <div class="big"><span class="n">${fE.format(Math.round(+L.revenu||0))} €</span><span class="u">/ mois à partir de ${esc(L.debutAge)} ans</span></div>
@@ -933,9 +985,11 @@ let rsz;window.addEventListener('resize',()=>{clearTimeout(rsz);rsz=setTimeout(d
 /* ================= tab: solution chiffrée ================= */
 function chiffreeData(c,ctx){
   const lines=c.levers.map(L=>{const o=leverOut(L,ctx);
-    let sub='';if(L.kind==='manuel'){sub=L.sub&&L.sub.trim()?L.sub.trim():((+L.mensuel>0||+L.capital>0)?`(Effort ${[+L.mensuel>0?eurm(L.mensuel):'',+L.capital>0?eur(L.capital)+' apport':''].filter(Boolean).join(' + ')})`:'');}
-    const vers=L.kind==='manuel'?(+L.capital>0?eur(L.capital):(+L.mensuel>0?eurm(L.mensuel):'/')):versText(o);
-    const revSub=L.kind==='manuel'&&+L.debutAge&&+L.debutAge!==+c.retraite?`à partir de ${L.debutAge} ans`:'';
+    let sub='';if(L.kind==='scpi'&&o.scpi){sub=`(Effort ${eurm(o.mensuel)} + ${eur(o.capital)} apport, crédit ${L.duree} ans)`;}
+    else if(L.kind==='manuel'){sub=L.sub&&L.sub.trim()?L.sub.trim():((+L.mensuel>0||+L.capital>0)?`(Effort ${[+L.mensuel>0?eurm(L.mensuel):'',+L.capital>0?eur(L.capital)+' apport':''].filter(Boolean).join(' + ')})`:'');}
+    const vers=L.kind==='scpi'?(o.capital>0?eur(o.capital):'/'):L.kind==='manuel'?(+L.capital>0?eur(L.capital):(+L.mensuel>0?eurm(L.mensuel):'/')):versText(o);
+    const dA=L.kind==='scpi'?o.debutAge:(L.kind==='manuel'?+L.debutAge:0);
+    const revSub=dA&&dA!==+c.retraite?`à partir de ${dA} ans`:'';
     const kind=o.capital>0&&o.mensuel>0?'mix':o.capital>0?'cap':'men';
     return {label:leverLabel(L),sub,vers,capR:o.capR,W:o.W,revSub,kind,o,L};});
   const kinds=new Set(lines.map(l=>l.kind));
@@ -1067,7 +1121,8 @@ async function exportXlsx(msgEl){
   kv('Date de l\'étude',new Date().toLocaleDateString('fr-FR'));w3.addRow([]);
   c.levers.forEach(L=>{
     w3.addRow([leverLabel(L)]).getCell(1).font={bold:true,color:{argb:NAVY}};
-    if(L.kind==='manuel'){kv('Effort mensuel',eurm(L.mensuel));kv('Apport',eur(L.capital));kv(`Capital à ${c.retraite} ans`,eur(L.capRetraite));kv('Revenu',`${eurm(L.revenu)} à partir de ${L.debutAge} ans`);}
+    if(L.kind==='scpi'){const o=leverOut(L,ctx);kv('Durée du crédit',`${L.duree} ans`);kv('Montant du projet',eur(o.capR));kv('Apport',eur(o.capital));kv('Participation',eurm(o.mensuel));kv('Revenus',`${eurm(o.W)} à partir de ${o.debutAge} ans`);}
+    else if(L.kind==='manuel'){kv('Effort mensuel',eurm(L.mensuel));kv('Apport',eur(L.capital));kv(`Capital à ${c.retraite} ans`,eur(L.capRetraite));kv('Revenu',`${eurm(L.revenu)} à partir de ${L.debutAge} ans`);}
     else{const o=leverOut(L,ctx);kv('Versements',versText(o)+(L.idxOn?` (indexés +${pct(L.idx,1)}/an)`:''));kv('Rendement',`${pct(L.r)} ${L.rt}`);kv('Frais de gestion',`${pct(L.fg)} / an`);kv('Frais sur versements',pct(L.fv));kv('Rachats',L.mr==='fixe'?`Montant choisi : ${eurm(L.fixe)}`:'Épuisement du capital à l\'horizon');kv(`Capital à ${c.retraite} ans`,eur(o.capR));kv('Revenu complémentaire (brut)',eurm(o.W));}
     w3.addRow([]);
   });

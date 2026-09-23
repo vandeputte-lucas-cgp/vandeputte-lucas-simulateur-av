@@ -274,6 +274,9 @@ table.opt td.na{color:var(--ink-3)}
 .optc:hover:not(:disabled){border-color:var(--ink-3)}
 .optc.sel{background:var(--navy);border-color:var(--navy);color:var(--navy-ink)}
 .optc.sel span{color:var(--navy-ink);opacity:.85}
+.optc em{font-style:normal;font-size:11.5px;font-weight:700;color:var(--teal)}
+.optc.sel em{color:var(--navy-ink)}
+tr.custrow td{background:var(--navy-soft);border-bottom:2px solid var(--line)}
 .optc:disabled{opacity:.3;cursor:not-allowed}
 .optc:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
@@ -342,11 +345,19 @@ const SCPI_TABLE=[
 [270000,27000,875,1455,540,1492,346,1529],[280000,28000,907,1509,560,1547,359,1586],[290000,29000,940,1563,580,1602,372,1643],
 [300000,30000,972,1617,600,1657,384,1699]];
 const SCPI_COL={15:2,20:4,25:6};
-function scpiLook(L){
-  const row=SCPI_TABLE.find(r=>r[0]===+L.projet);const k=SCPI_COL[+L.duree]||6;
-  if(!row||row[k]==null)return null;
-  return {projet:row[0],apport:row[1],part:row[k],rev:row[k+1]};
+function scpiAt(P,d){
+  const k=SCPI_COL[d]||6;P=+P||0;if(P<=0)return null;
+  const rows=SCPI_TABLE.filter(r=>r[k]!=null);
+  const ex=rows.find(r=>r[0]===P);
+  if(ex)return {projet:P,apport:ex[1],part:ex[k],rev:ex[k+1],interp:null};
+  let lo=null,hi=null;rows.forEach(r=>{if(r[0]<P)lo=r;if(r[0]>P&&!hi)hi=r;});
+  let part,rev,how;
+  if(lo&&hi){const t=(P-lo[0])/(hi[0]-lo[0]);part=lo[k]+t*(hi[k]-lo[k]);rev=lo[k+1]+t*(hi[k+1]-lo[k+1]);how=`entre ${fE.format(lo[0])} € et ${fE.format(hi[0])} €`;}
+  else{const r=lo||hi;part=r[k]*P/r[0];rev=r[k+1]*P/r[0];how=`au prorata de la ligne ${fE.format(r[0])} €`;}
+  return {projet:P,apport:Math.round(P*0.1),part:Math.round(part),rev:Math.round(rev),interp:how};
 }
+function scpiLook(L){return scpiAt(L.projet,+L.duree||25);}
+function scpiRet(L,d){const r=+L['ret'+d];if(r>0)return r;const c=+L['cap'+d];return c>0?Math.floor(c/1000)*1000:0;}
 function newScpi(over){return Object.assign({id:uid(),kind:'scpi',label:'',duree:25,projet:50000},over||{});}
 function newManual(over){return Object.assign({id:uid(),kind:'manuel',label:'Immobilier',mensuel:70,capital:4400,capRetraite:44000,revenu:283,debutAge:49,sub:''},over||{});}
 function newClient(){
@@ -783,9 +794,8 @@ function renderLeverEditor(c,ctx){
       </section>
       <section class="grp"><h2>Capacité d'emprunt</h2>
         <p class="note">Reportez les résultats du simulateur Cap Finances. Les options du mémo au-delà de la capacité sont grisées ; laissez vide pour tout afficher.</p>
-        ${numField('l-cap15','Sur 15 ans',L.cap15||'','€','min="0" step="1000" placeholder="non renseignée"')}
-        ${numField('l-cap20','Sur 20 ans',L.cap20||'','€','min="0" step="1000" placeholder="non renseignée"')}
-        ${numField('l-cap25','Sur 25 ans',L.cap25||'','€','min="0" step="1000" placeholder="non renseignée"')}
+        ${[15,20,25].map(d=>`<div class="row">${numField('l-cap'+d,`Capacité ${d} ans`,L['cap'+d]||'','€','min="0" step="1000" placeholder="non renseignée"')}${numField('l-ret'+d,'Montant retenu',L['ret'+d]||'','€',`min="0" step="1000" placeholder="${scpiRet(L,d)?fE.format(scpiRet(L,d)):'—'}"`)}</div>`).join('')}
+        <p class="note">« Montant retenu » : par défaut la capacité arrondie au millier inférieur. Participation et revenus sont calculés par produit en croix entre les deux lignes du mémo qui l'encadrent.</p>
         <p class="note">25 ans : salariés et professions libérales uniquement.</p>
       </section>${actions}</form>
       <div class="results" id="lres"></div></div>`;
@@ -847,12 +857,13 @@ function bindLeverForm(c,L){
   f.addEventListener('submit',e=>e.preventDefault());
   f.addEventListener('input',e=>{
     const t=e.target,k=(t.name||t.id).replace(/^l-/,'');
-    const map={cap15:'cap15',cap20:'cap20',cap25:'cap25',label:'label',mensuel:'mensuel',capital:'capital',capR:'capRetraite',rev:'revenu',deb:'debutAge',sub:'sub',idx:'idx',fixe:'fixe',r:'r',fg:'fg',fv:'fv',ps:'ps'};
+    const map={ret15:'ret15',ret20:'ret20',ret25:'ret25',cap15:'cap15',cap20:'cap20',cap25:'cap25',label:'label',mensuel:'mensuel',capital:'capital',capR:'capRetraite',rev:'revenu',deb:'debutAge',sub:'sub',idx:'idx',fixe:'fixe',r:'r',fg:'fg',fv:'fv',ps:'ps'};
     if(k==='duree'){L.duree=+t.value;if(!scpiLook(L)){const r=SCPI_TABLE.find(r=>r[SCPI_COL[L.duree]]!=null);if(r)L.projet=r[0];}renderLeverEditor(c,ctxOf(c));touch();renderLeverStrip(c,ctxOf(c));return;}
     else if(k==='projet')L.projet=+t.value;
     else if(k==='prod')L.produit=t.value;else if(k==='mv')L.mv=t.value;else if(k==='mr')L.mr=t.value;else if(k==='rt')L.rt=t.value;
     else if(k==='idxOn')L.idxOn=t.checked;else if(k==='fisc')L.fisc=t.checked;
     else if(map[k])L[map[k]]=(k==='label'||k==='sub')?t.value:numv(t.value);
+    if(L.kind==='scpi'&&/^(cap|ret)\d+$/.test(k)){[15,20,25].forEach(d=>{const el=$('l-ret'+d);if(el)el.placeholder=scpiRet(L,d)?fE.format(scpiRet(L,d)):'—';});if(L.custom&&scpiRet(L,L.duree))L.projet=scpiRet(L,L.duree);}
     syncLeverVis(L);touch();const ctx=ctxOf(c);renderLeverStrip(c,ctx);renderLeverResults(c,ctx);
   });
   const um=$('useMax');if(um)um.onclick=()=>{const ctx=ctxOf(c);if(ctx.errs.length)return;const r=simulate(L,ctx,{});L.fixe=Math.floor(r.W);$('l-fixe').value=L.fixe;touch();renderLeverStrip(c,ctx);renderLeverResults(c,ctx);};
@@ -874,14 +885,19 @@ function renderLeverResults(c,ctx){
     const anyCap=caps[15]||caps[20]||caps[25];
     const rows=SCPI_TABLE.filter(r=>!anyCap||[15,20,25].some(d=>ok(r,d))||(t&&r[0]===t.projet));
     const deb=Math.floor(ctx.a1/12)+(+L.duree);
-    const hero=t?`<section class="hero"><p class="eyebrow">${esc(leverLabel(L))} · option retenue · crédit sur ${L.duree} ans</p>
+    const hero=t?`<section class="hero"><p class="eyebrow">${esc(leverLabel(L))} · option retenue · crédit sur ${L.duree} ans${t.interp?' · produit en croix':''}</p>
       <div class="big"><span class="n">${fE.format(t.rev)} €</span><span class="u">/ mois à partir de ${deb} ans</span></div>
       <p class="thesis">Projet de ${eur(t.projet)} : apport de ${eur(t.apport)} et participation de ${eurm(t.part)} pendant ${L.duree} ans, puis ${eurm(t.rev)} de revenus.</p>
+      ${t.interp?`<p class="note">Calcul au prorata ${esc(t.interp)} du mémo.</p>`:''}
       ${caps[L.duree]&&t.projet>caps[L.duree]?`<div class="alert warn"><span class="dot"></span><span>Ce projet dépasse la capacité d'emprunt sur ${L.duree} ans (${eur(caps[L.duree])}).</span></div>`:''}</section>`
       :`<div class="alert warn"><span class="dot"></span><span>Choisissez une option dans le tableau ci-dessous.</span></div>`;
+    const ccell=d=>{const P=scpiRet(L,d);const o=P?scpiAt(P,d):null;if(!o)return '<td class="na">—</td>';
+      const sel=L.custom&&+L.duree===d&&t&&t.projet===P;
+      return `<td><button type="button" class="optc cust${sel?' sel':''}" data-d="${d}" data-p="${P}" data-c="1" aria-pressed="${sel}"><em>${fE.format(P)} €</em><b>${o.part} €/m</b><span>→ ${fE.format(o.rev)} €/m</span></button></td>`;};
+    const customRow=[15,20,25].some(d=>scpiRet(L,d))?`<tr class="custrow"><td class="pj">Montant retenu</td><td class="ap">10 %</td>${ccell(15)}${ccell(20)}${ccell(25)}</tr>`:'';
     const head=d=>`<th>${d} ans<span class="capl">${caps[d]?'capacité '+kEur(caps[d]):'capacité non renseignée'}</span></th>`;
     const cell=(r,d)=>{const k=SCPI_COL[d];if(r[k]==null)return '<td class="na">—</td>';
-      const sel=t&&t.projet===r[0]&&+L.duree===d,dis=!ok(r,d);
+      const sel=!L.custom&&t&&t.projet===r[0]&&+L.duree===d,dis=!ok(r,d);
       return `<td><button type="button" class="optc${sel?' sel':''}" data-d="${d}" data-p="${r[0]}" aria-pressed="${sel}" ${dis&&!sel?'disabled':''}><b>${r[k]} €/m</b><span>→ ${fE.format(r[k+1])} €/m</span></button></td>`;};
     box.innerHTML=hero+`
       <section class="kpis">
@@ -892,10 +908,10 @@ function renderLeverResults(c,ctx){
       </section>
       <section class="card"><div class="card-h"><h3>Options possibles</h3><span class="note">Participation mensuelle → revenus en fin de crédit. Cliquez sur l'option retenue.</span></div>
         <div class="stw"><table class="opt"><thead><tr><th>Projet</th><th>Apport</th>${head(15)}${head(20)}${head(25)}</tr></thead>
-        <tbody>${rows.map(r=>`<tr><td class="pj">${eur(r[0])}</td><td class="ap">${eur(r[1])}</td>${cell(r,15)}${cell(r,20)}${cell(r,25)}</tr>`).join('')}</tbody></table></div>
+        <tbody>${customRow}${rows.map(r=>`<tr><td class="pj">${eur(r[0])}</td><td class="ap">${eur(r[1])}</td>${cell(r,15)}${cell(r,20)}${cell(r,25)}</tr>`).join('')}</tbody></table></div>
       </section>
-      <p class="disc">Chiffres repris du mémo « tableau simplifié pour vos projets SCPI » (rentabilité 6 % avant imposition), sans recalcul.</p>`;
-    box.querySelectorAll('.optc').forEach(bt=>bt.onclick=()=>{L.duree=+bt.dataset.d;L.projet=+bt.dataset.p;touch();const cx=ctxOf(c);renderLeverStrip(c,cx);renderLeverResults(c,cx);});
+      <p class="disc">Chiffres repris du mémo « tableau simplifié pour vos projets SCPI » (rentabilité 6 % avant imposition). Les montants retenus hors lignes du mémo sont calculés au prorata.</p>`;
+    box.querySelectorAll('.optc').forEach(bt=>bt.onclick=()=>{L.duree=+bt.dataset.d;L.projet=+bt.dataset.p;L.custom=!!bt.dataset.c;touch();const cx=ctxOf(c);renderLeverStrip(c,cx);renderLeverResults(c,cx);});
     return;
   }
   if(L.kind==='manuel'){

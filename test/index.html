@@ -262,6 +262,20 @@ table.mx td.lv{font-weight:600;min-width:170px}
 .authcard form{display:grid;gap:12px}
 .authcard code{background:var(--surface-2);padding:1px 5px;border-radius:4px}
 @media (max-width:640px){.clientbar{width:100%}.search{flex:1 1 100%;width:auto}.clientbar select{flex:1}}
+table.opt{border-collapse:collapse;width:100%;min-width:560px;font-variant-numeric:tabular-nums;font-size:13.5px}
+table.opt th{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-3);font-weight:700;text-align:center;padding:8px 6px;border-bottom:1px solid var(--line)}
+table.opt th .capl{display:block;text-transform:none;letter-spacing:0;font-weight:600;color:var(--teal);font-size:11.5px}
+table.opt td{padding:4px 6px;border-bottom:1px solid var(--line);text-align:center}
+table.opt td.pj{font-weight:700;text-align:left;white-space:nowrap}
+table.opt td.ap{color:var(--ink-2);white-space:nowrap}
+table.opt td.na{color:var(--ink-3)}
+.optc{font:inherit;display:grid;gap:0;width:100%;min-width:92px;padding:6px 8px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink);cursor:pointer;line-height:1.3}
+.optc span{font-size:12px;color:var(--ink-2)}
+.optc:hover:not(:disabled){border-color:var(--ink-3)}
+.optc.sel{background:var(--navy);border-color:var(--navy);color:var(--navy-ink)}
+.optc.sel span{color:var(--navy-ink);opacity:.85}
+.optc:disabled{opacity:.3;cursor:not-allowed}
+.optc:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 </head>
@@ -763,13 +777,16 @@ function renderLeverEditor(c,ctx){
   if(!L){box.innerHTML='';return;}
   const actions=`<section class="grp" style="padding-bottom:0"><div style="display:flex;gap:8px;flex-wrap:wrap"><button type="button" class="btn" id="lDup">Dupliquer le levier</button><button type="button" class="btn danger" id="lDel">Supprimer le levier</button></div></section>`;
   if(L.kind==='scpi'){
-    const col=SCPI_COL[+L.duree]||6;
     box.innerHTML=`<div class="app"><form class="panel" id="lform" novalidate autocomplete="off">
       <section class="grp"><h2>SCPI à crédit</h2>
         <div class="field"><label for="l-label">Nom affiché</label><div class="inp"><input id="l-label" type="text" value="${esc(L.label)}" placeholder="SCPI"></div></div>
-        <div class="field"><span class="lbl">Durée du crédit</span>${seg('l-duree',[['15','15 ans'],['20','20 ans'],['25','25 ans']],String(L.duree))}</div>
-        <div class="field"><label for="l-projet">Montant du projet</label><div class="inp"><select id="l-projet" style="border:0;background:transparent;padding:8px 10px;width:100%;font:inherit;font-weight:600;color:var(--ink)">${SCPI_TABLE.map(r=>`<option value="${r[0]}" ${r[0]===+L.projet?'selected':''} ${r[col]==null?'disabled':''}>${eur(r[0])} · apport ${eur(r[1])}${r[col]!=null?` · ${r[col]} €/m`:' · non proposé'}</option>`).join('')}</select></div></div>
-        <p class="note">Valeurs lues dans le mémo « tableau simplifié pour vos projets SCPI » (rentabilité 6 % avant imposition).</p>
+      </section>
+      <section class="grp"><h2>Capacité d'emprunt</h2>
+        <p class="note">Reportez les résultats du simulateur Cap Finances. Les options du mémo au-delà de la capacité sont grisées ; laissez vide pour tout afficher.</p>
+        ${numField('l-cap15','Sur 15 ans',L.cap15||'','€','min="0" step="1000" placeholder="non renseignée"')}
+        ${numField('l-cap20','Sur 20 ans',L.cap20||'','€','min="0" step="1000" placeholder="non renseignée"')}
+        ${numField('l-cap25','Sur 25 ans',L.cap25||'','€','min="0" step="1000" placeholder="non renseignée"')}
+        <p class="note">25 ans : salariés et professions libérales uniquement.</p>
       </section>${actions}</form>
       <div class="results" id="lres"></div></div>`;
   }else if(L.kind==='manuel'){
@@ -830,7 +847,7 @@ function bindLeverForm(c,L){
   f.addEventListener('submit',e=>e.preventDefault());
   f.addEventListener('input',e=>{
     const t=e.target,k=(t.name||t.id).replace(/^l-/,'');
-    const map={label:'label',mensuel:'mensuel',capital:'capital',capR:'capRetraite',rev:'revenu',deb:'debutAge',sub:'sub',idx:'idx',fixe:'fixe',r:'r',fg:'fg',fv:'fv',ps:'ps'};
+    const map={cap15:'cap15',cap20:'cap20',cap25:'cap25',label:'label',mensuel:'mensuel',capital:'capital',capR:'capRetraite',rev:'revenu',deb:'debutAge',sub:'sub',idx:'idx',fixe:'fixe',r:'r',fg:'fg',fv:'fv',ps:'ps'};
     if(k==='duree'){L.duree=+t.value;if(!scpiLook(L)){const r=SCPI_TABLE.find(r=>r[SCPI_COL[L.duree]]!=null);if(r)L.projet=r[0];}renderLeverEditor(c,ctxOf(c));touch();renderLeverStrip(c,ctxOf(c));return;}
     else if(k==='projet')L.projet=+t.value;
     else if(k==='prod')L.produit=t.value;else if(k==='mv')L.mv=t.value;else if(k==='mr')L.mr=t.value;else if(k==='rt')L.rt=t.value;
@@ -851,19 +868,34 @@ function renderLeverResults(c,ctx){
   const box=$('lres');if(!box)return;const L=curLever(c);if(!L)return;
   if(ctx.errs.length){box.innerHTML=`<div class="alert err"><span class="dot"></span><span>${esc(ctx.errs.join(' '))} Corrigez le profil du client ci-dessus.</span></div>`;return;}
   if(L.kind==='scpi'){
-    const t=scpiLook(L);if(!t){box.innerHTML='<div class="alert warn"><span class="dot"></span><span>Ce montant n\'est pas proposé pour cette durée.</span></div>';return;}
-    const deb=Math.floor(ctx.a1/12)+(+L.duree);const col=SCPI_COL[+L.duree];
-    box.innerHTML=`<section class="hero"><p class="eyebrow">${esc(leverLabel(L))} · crédit sur ${L.duree} ans</p>
+    const t=scpiLook(L);
+    const caps={15:+L.cap15||0,20:+L.cap20||0,25:+L.cap25||0};
+    const ok=(r,d)=>r[SCPI_COL[d]]!=null&&(!caps[d]||r[0]<=caps[d]);
+    const anyCap=caps[15]||caps[20]||caps[25];
+    const rows=SCPI_TABLE.filter(r=>!anyCap||[15,20,25].some(d=>ok(r,d))||(t&&r[0]===t.projet));
+    const deb=Math.floor(ctx.a1/12)+(+L.duree);
+    const hero=t?`<section class="hero"><p class="eyebrow">${esc(leverLabel(L))} · option retenue · crédit sur ${L.duree} ans</p>
       <div class="big"><span class="n">${fE.format(t.rev)} €</span><span class="u">/ mois à partir de ${deb} ans</span></div>
-      <p class="thesis">Projet de ${eur(t.projet)} : apport de ${eur(t.apport)} et participation de ${eurm(t.part)} pendant ${L.duree} ans, puis ${eurm(t.rev)} de revenus.</p></section>
+      <p class="thesis">Projet de ${eur(t.projet)} : apport de ${eur(t.apport)} et participation de ${eurm(t.part)} pendant ${L.duree} ans, puis ${eurm(t.rev)} de revenus.</p>
+      ${caps[L.duree]&&t.projet>caps[L.duree]?`<div class="alert warn"><span class="dot"></span><span>Ce projet dépasse la capacité d'emprunt sur ${L.duree} ans (${eur(caps[L.duree])}).</span></div>`:''}</section>`
+      :`<div class="alert warn"><span class="dot"></span><span>Choisissez une option dans le tableau ci-dessous.</span></div>`;
+    const head=d=>`<th>${d} ans<span class="capl">${caps[d]?'capacité '+kEur(caps[d]):'capacité non renseignée'}</span></th>`;
+    const cell=(r,d)=>{const k=SCPI_COL[d];if(r[k]==null)return '<td class="na">—</td>';
+      const sel=t&&t.projet===r[0]&&+L.duree===d,dis=!ok(r,d);
+      return `<td><button type="button" class="optc${sel?' sel':''}" data-d="${d}" data-p="${r[0]}" aria-pressed="${sel}" ${dis&&!sel?'disabled':''}><b>${r[k]} €/m</b><span>→ ${fE.format(r[k+1])} €/m</span></button></td>`;};
+    box.innerHTML=hero+`
       <section class="kpis">
-        <div class="kpi"><span class="k">Montant du projet</span><span class="v">${eur(t.projet)}</span><span class="s">capital hors plus-value</span></div>
-        <div class="kpi"><span class="k">Apport</span><span class="v">${eur(t.apport)}</span><span class="s">10 % du projet</span></div>
-        <div class="kpi"><span class="k">Participation</span><span class="v">${eurm(t.part)}</span><span class="s">pendant ${L.duree} ans</span></div>
-        <div class="kpi"><span class="k">Revenus</span><span class="v">${eurm(t.rev)}</span><span class="s">à partir de ${deb} ans</span></div>
+        <div class="kpi"><span class="k">Montant du projet</span><span class="v">${t?eur(t.projet):'—'}</span><span class="s">capital hors plus-value</span></div>
+        <div class="kpi"><span class="k">Apport</span><span class="v">${t?eur(t.apport):'—'}</span><span class="s">10 % du projet</span></div>
+        <div class="kpi"><span class="k">Participation</span><span class="v">${t?eurm(t.part):'—'}</span><span class="s">pendant ${L.duree} ans</span></div>
+        <div class="kpi"><span class="k">Revenus</span><span class="v">${t?eurm(t.rev):'—'}</span><span class="s">à partir de ${deb} ans</span></div>
       </section>
-      <details class="tbl"><summary>Mémo SCPI · crédit ${L.duree} ans</summary><div class="tbl-scroll"><table class="yr"><thead><tr><th>Montant du projet</th><th>Apport</th><th>Participation</th><th>Revenus à ${L.duree} ans</th></tr></thead><tbody>${SCPI_TABLE.filter(r=>r[col]!=null).map(r=>`<tr${r[0]===t.projet?' style="font-weight:800;background:var(--navy-soft)"':''}><td>${eur(r[0])}</td><td>${eur(r[1])}</td><td>${eurm(r[col])}</td><td>${eurm(r[col+1])}</td></tr>`).join('')}</tbody></table></div></details>
-      <p class="disc">Chiffres repris du mémo, sans recalcul. Rentabilité de 6 % avant imposition.</p>`;
+      <section class="card"><div class="card-h"><h3>Options possibles</h3><span class="note">Participation mensuelle → revenus en fin de crédit. Cliquez sur l'option retenue.</span></div>
+        <div class="stw"><table class="opt"><thead><tr><th>Projet</th><th>Apport</th>${head(15)}${head(20)}${head(25)}</tr></thead>
+        <tbody>${rows.map(r=>`<tr><td class="pj">${eur(r[0])}</td><td class="ap">${eur(r[1])}</td>${cell(r,15)}${cell(r,20)}${cell(r,25)}</tr>`).join('')}</tbody></table></div>
+      </section>
+      <p class="disc">Chiffres repris du mémo « tableau simplifié pour vos projets SCPI » (rentabilité 6 % avant imposition), sans recalcul.</p>`;
+    box.querySelectorAll('.optc').forEach(bt=>bt.onclick=()=>{L.duree=+bt.dataset.d;L.projet=+bt.dataset.p;touch();const cx=ctxOf(c);renderLeverStrip(c,cx);renderLeverResults(c,cx);});
     return;
   }
   if(L.kind==='manuel'){

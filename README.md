@@ -19,5 +19,5 @@ Il reçoit un lien, choisit son mot de passe, et arrive sur son espace vide.
 (Les inscriptions libres sont désactivées.)
 
 ## Réglages Supabase à faire une fois
-- Authentication → URL Configuration → **Site URL** = adresse du site (ex. `https://lucasvedep-ai.github.io/vandeputte-lucas-simulateur-av/`)
+- Authentication → URL Configuration → **Site URL** = adresse du site (ex. `https://vandeputte-lucas-cgp.github.io/vandeputte-lucas-simulateur-av/`)
   et ajouter la même adresse + `test/` dans **Redirect URLs**.

@@ -553,7 +553,28 @@ function triCompute(c,ctx){
 
 /* ================= storage (Supabase) ================= */
 const CFG=window.SIM_CONFIG||{};
-const S={clients:{},cur:null,lever:null,tab:'leviers',sb:null,user:null,chan:null,dirty:new Set(),saving:false,again:false,t:null,online:true};
+const S={clients:{},cur:null,lever:null,tab:'leviers',sb:null,user:null,chan:null,dirty:new Set(),saving:false,again:false,t:null,online:true,base:{}};
+const clone=o=>JSON.parse(JSON.stringify(o));
+const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
+/* fusion à trois : ce qui a changé ici depuis la dernière version connue du serveur l'emporte, le reste vient du serveur */
+function merge3(b,l,r){
+  if(same(l,b))return clone(r);
+  if(same(r,b)||r===undefined)return clone(l);
+  if(Array.isArray(l)&&Array.isArray(r)&&l.every(x=>x&&x.id)&&r.every(x=>x&&x.id)){
+    const bm=Object.fromEntries((Array.isArray(b)?b:[]).filter(x=>x&&x.id).map(x=>[x.id,x]));
+    const rm=Object.fromEntries(r.map(x=>[x.id,x]));const lm=Object.fromEntries(l.map(x=>[x.id,x]));
+    const out=[];
+    l.forEach(x=>{if(rm[x.id])out.push(merge3(bm[x.id],x,rm[x.id]));else if(!bm[x.id])out.push(clone(x));/* supprimé ailleurs */});
+    r.forEach(x=>{if(!lm[x.id]&&!bm[x.id])out.push(clone(x));/* ajouté ailleurs */});
+    return out;
+  }
+  if(l&&r&&typeof l==='object'&&typeof r==='object'&&!Array.isArray(l)&&!Array.isArray(r)){
+    const o={};const bb=(b&&typeof b==='object')?b:{};
+    new Set([...Object.keys(l),...Object.keys(r)]).forEach(k=>{const v=merge3(bb[k],l[k],r[k]);if(v!==undefined)o[k]=v;});
+    return o;
+  }
+  return clone(l);
+}
 const cacheKey=()=>'av-cache-'+(S.user?S.user.id:'x');
 function saveCache(){try{localStorage.setItem(cacheKey(),JSON.stringify(S.clients));}catch(e){}}
 function loadCache(){try{const o=JSON.parse(localStorage.getItem(cacheKey())||'null');if(o&&typeof o==='object')S.clients=o;}catch(e){}}
@@ -569,9 +590,16 @@ async function flush(){
   S.saving=true;
   const ids=[...S.dirty];S.dirty.clear();let failed=false;
   for(const id of ids){
-    const c=S.clients[id];if(!c)continue;
+    let c=S.clients[id];if(!c)continue;
+    const got=await S.sb.from('clients').select('data').eq('id',id);
+    if(got.error){failed=true;S.dirty.add(id);continue;}
+    const remote=got.data&&got.data[0]?got.data[0].data:null,base=S.base[id];
+    if(remote&&!same(remote,base)&&!same(remote,c)){
+      c=merge3(base,c,remote);c.updatedAt=Date.now();S.clients[id]=c;
+      if(id===S.cur){if(!document.activeElement?.closest?.('#root'))renderAll();else renderClientSelect();}
+    }
     const {error}=await S.sb.from('clients').upsert({id,nom:String(c.nom||''),data:c,updated_at:new Date(c.updatedAt||Date.now()).toISOString()});
-    if(error){failed=true;S.dirty.add(id);}
+    if(error){failed=true;S.dirty.add(id);}else S.base[id]=clone(c);
   }
   S.saving=false;saveCache();
   S.online=!failed;
@@ -584,7 +612,9 @@ async function loadAll(){
   S.online=true;
   const m={};
   data.forEach(r=>{const local=S.clients[r.id];
-    m[r.id]=(S.dirty.has(r.id)&&local)||(local&&(local.updatedAt||0)>(r.data.updatedAt||0)?local:r.data);});
+    if(S.dirty.has(r.id)&&local){m[r.id]=local;if(!S.base[r.id])S.base[r.id]=clone(r.data);}
+    else if(local&&(local.updatedAt||0)>(r.data.updatedAt||0)){m[r.id]=local;S.base[r.id]=clone(r.data);S.dirty.add(r.id);}
+    else{m[r.id]=r.data;S.base[r.id]=clone(r.data);}});
   // local-only dossiers not yet saved (created offline)
   Object.keys(S.clients).forEach(id=>{if(!m[id]&&S.dirty.has(id))m[id]=S.clients[id];});
   S.clients=m;saveCache();
@@ -605,7 +635,7 @@ function subscribe(){
       const r=p.new;if(!r||!r.data)return;
       const local=S.clients[r.id];
       if(S.dirty.has(r.id)||(local&&(local.updatedAt||0)>=(r.data.updatedAt||0)))return;
-      S.clients[r.id]=r.data;afterRemote(r.id);
+      S.clients[r.id]=clone(r.data);S.base[r.id]=clone(r.data);afterRemote(r.id);
     }).subscribe();
 }
 async function removeClient(id){
@@ -681,6 +711,9 @@ async function initStore(){
 }
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&S.user){loadAll().then(ok=>{if(ok){pickDefault();if(!document.activeElement?.closest?.('#root'))renderAll();else renderClientSelect();}});}});
 window.addEventListener('online',()=>{if(S.user)flush();});
+function refreshFromServer(){if(!S.user||S.dirty.size||S.saving)return;loadAll().then(ok=>{if(ok){pickDefault();if(!document.activeElement?.closest?.('#root'))renderAll();else renderClientSelect();}});}
+window.addEventListener('focus',refreshFromServer);window.addEventListener('pageshow',refreshFromServer);
+setInterval(()=>{if(document.visibilityState==='visible')refreshFromServer();},60000);
 function pickDefault(){
   const list=Object.values(S.clients).sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0));
   if(!S.clients[S.cur])S.cur=list[0]?.id||null;

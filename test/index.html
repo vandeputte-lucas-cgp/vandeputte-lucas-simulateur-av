@@ -289,6 +289,12 @@ tr.custrow td{background:var(--navy-soft);border-bottom:2px solid var(--line)}
 .taxgrid .hl{background:var(--teal-soft);border-color:transparent} .taxgrid .hl .v{color:var(--teal)}
 .advice{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:10px;margin-top:12px;padding:12px 14px;border-radius:10px;background:var(--navy-soft)}
 .advice .s{display:block;font-size:12.5px;color:var(--ink-2);margin-top:2px}
+.verdict{display:grid;gap:3px;border-radius:10px;padding:12px 14px;margin-bottom:12px;border-left:4px solid}
+.verdict b{font-size:17px} .verdict span{font-size:14px;color:var(--ink-2)}
+.v-ok{background:var(--teal-soft);border-color:var(--teal)} .v-ok b{color:var(--teal)}
+.v-warn{background:var(--amber-soft);border-color:var(--amber)} .v-warn b{color:var(--amber)}
+.v-err{background:var(--red-soft);border-color:var(--red)} .v-err b{color:var(--red)}
+.vnote{font-size:13.5px;margin:-4px 0 12px;color:var(--ink);background:var(--amber-soft);border-radius:8px;padding:8px 12px}
 .plafbox{background:var(--surface-2);border-radius:10px;padding:12px 14px;display:grid;gap:6px;font-size:14px}
 .plafbox ol{margin:0;padding-left:20px;display:grid;gap:2px;color:var(--ink-2);font-size:13.5px;font-variant-numeric:tabular-nums}
 .plafbox .s{font-size:12.5px;color:var(--ink-3)}
@@ -895,7 +901,8 @@ function renderLeverStrip(c,ctx){
   el.innerHTML=c.levers.map(L=>{
     let f='';
     if(!ctx.errs.length){const o=leverOut(L,ctx);f=`${esc(versText(o))} · <b>${kEur(o.capR)}</b> · <b>${eurm(o.W)}</b>`;}
-    const pill=L.kind==='manuel'?'Manuel':L.kind==='scpi'?'SCPI':L.produit;
+    let pill=L.kind==='manuel'?'Manuel':L.kind==='scpi'?'SCPI':L.produit;
+    if(L.kind==='sim'&&L.produit==='PER'){const pf=perFiscal(c,perAnnual(L));if(pf)pill+=pf.tmi>=.30?' · ✓ utile':pf.tmi>0?' · peu utile':' · inutile';}
     return `<button type="button" class="lcard" aria-pressed="${L.id===S.lever}" data-l="${L.id}"><span class="t"><span>${esc(leverLabel(L))}</span><span class="pill">${pill}</span></span><span class="f">${f}</span></button>`;
   }).join('');
   el.querySelectorAll('[data-l]').forEach(b=>b.onclick=()=>{S.lever=b.dataset.l;renderLeverStrip(c,ctxOf(c));renderLeverEditor(c,ctxOf(c));});
@@ -1129,12 +1136,19 @@ function perCardHTML(c,L){
   const why=r.tmi>=.30?`Chaque euro versé jusqu'à ${eur(r.utile)} par an fait économiser ${Math.round(r.tmi*100)} %.`:r.tmi>0?'Tranche à 11 % : l\'économie est faible et l\'argent reste bloqué jusqu\'à la retraite.':'Pas d\'impôt : le versement ne fait rien économiser.';
   const plTitle=r.pl.source==='avis'?`Plafond retenu : <b>${eur(r.plaf)} / an</b> (avis d'imposition)`:`Plafond ${fiscOf(c).statut==='tns'?'indépendant':'salarié'} : <b>${r.plaf?eur(r.plaf)+' / an':'—'}</b>`;
   const limTxt={tranche:'limité par la tranche à 30 % et plus',plafond:'limité par le plafond PER',capacite:'limité par la capacité d\'épargne'}[r.limit];
-  return `<section class="card taxcard"><div class="card-h"><h3>Plafond PER & économie d'impôt</h3><span class="pill-${lvl[0]}">TMI ${Math.round(r.tmi*100)} % · ${lvl[1]}</span></div>
+  const t=Math.round(r.tmi*100);
+  const V=r.tmi>=.41?['ok','Oui, le PER vaut vraiment le coup',`Le client est dans la tranche à ${t} % : chaque 100 € versés sur le PER font baisser son impôt de ${t} €.`]
+    :r.tmi>=.30?['ok','Oui, le PER vaut le coup',`Le client est dans la tranche à 30 % : chaque 100 € versés font baisser son impôt de 30 €, dans la limite de ${eur(r.utile)} par an (au-delà, il repasse dans la tranche à 11 %).`]
+    :r.tmi>0?['warn','Peu intéressant',`Le client est dans la tranche à 11 % : 100 € versés ne font économiser que 11 €, et l'argent reste bloqué jusqu'à la retraite. Mieux vaut en général l'assurance vie.`]
+    :['err','Non, pas de PER',`Le client ne paie pas d'impôt sur le revenu : le PER ne lui ferait rien économiser. Privilégier l'assurance vie.`];
+  const partial=r.tmi>=.30&&annual>r.utile&&r.utile>0?`<p class="vnote">Attention : le versement actuel (${eur(annual)} / an) dépasse la part du revenu dans la tranche à ${t} % (${eur(r.utile)}). Au-delà, chaque euro ne rapporte plus que ${r.tmi>=.41?'30':'11'} %. Économie réelle : ${eur(r.eco)}, soit ${Math.round(r.eco/annual*100)} % du versement.</p>`:'';
+  return `<section class="card taxcard"><div class="card-h"><h3>Plafond PER & économie d'impôt</h3><span class="pill-${lvl[0]}">TMI ${t} % · ${lvl[1]}</span></div>
+    <div class="verdict v-${V[0]}"><b>${V[1]}</b><span>${V[2]}</span></div>${partial}
     <div class="plafbox"><div>${plTitle}</div>${r.pl.source==='calcul'&&r.pl.steps.length?`<ol>${r.pl.steps.map(x=>`<li>${x}</li>`).join('')}</ol>`:''}
       <div class="s">Revenu imposable retenu : ${eur(r.R)}${r.revAuto?' (calculé, sans autres revenus du foyer)':''} · ${String(r.parts).replace('.',',')} part${r.parts>1?'s':''}</div></div>
     ${r.conseil>0?`<div class="advice"><div><b>Versement PER optimisé : ${eur(r.conseil)} / an</b>, soit ${eurm(Math.floor(r.conseil/12))}<span class="s">${limTxt} · économie d'impôt : ${eur(impot(r.R,r.parts,c.profil==='couple')-impot(r.R-r.conseil,r.parts,c.profil==='couple'))} / an</span></div>
       <button type="button" class="btn primary" id="perApply">Appliquer ${eurm(Math.floor(r.conseil/12))}</button></div>`:''}
-    <p class="msg" style="margin:12px 0 8px">${why}</p>
+    <div style="height:12px"></div>
     <div class="taxgrid">
       <div><span class="k">Versé sur le PER</span><span class="v">${eur(annual)} / an</span><span class="s">${L.mv!=='capital'?eurm(men):''}${L.mv==='both'&&+L.capital>0?' + versement initial':''}</span></div>
       <div><span class="k">Impôt sans / avec PER</span><span class="v">${eur(r.avant)} → ${eur(r.apres)}</span><span class="s">barème 2026</span></div>

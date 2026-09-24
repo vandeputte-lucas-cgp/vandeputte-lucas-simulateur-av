@@ -330,7 +330,7 @@ const eurm=v=>fE.format(Math.round(v||0))+' €/mois';
 const pct=(v,d=2)=>(+v).toLocaleString('fr-FR',{minimumFractionDigits:d,maximumFractionDigits:d})+' %';
 const kEur=v=>{const a=Math.abs(v);if(a>=1e6)return (v/1e6).toLocaleString('fr-FR',{maximumFractionDigits:1})+' M€';if(a>=1e3)return fE.format(v/1e3)+' k€';return fE.format(v)+' €';};
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const numv=v=>{const x=parseFloat(String(v??'').replace(/\s/g,'').replace(',','.'));return isFinite(x)?x:0;};
+const numv=v=>{const x=parseFloat(String(v??'').replace(/[\s\u00a0\u202f€%]/g,'').replace(',','.'));return isFinite(x)?x:0;};
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,8);
 const yrs=n=>n+(n>1?' ans':' an');
 function ageTxtM(m){m=Math.round(m);const y=Math.floor(m/12),r=m-y*12;return r?`${y} ans et ${r} mois`:`${y} ans`;}
@@ -556,6 +556,20 @@ const CFG=window.SIM_CONFIG||{};
 const S={clients:{},cur:null,lever:null,tab:'leviers',sb:null,user:null,chan:null,dirty:new Set(),saving:false,again:false,t:null,online:true,base:{}};
 const clone=o=>JSON.parse(JSON.stringify(o));
 const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
+/* met à jour un dossier « sur place » : les écrans ouverts gardent la même référence, aucune saisie ne part dans le vide */
+const isObj=o=>o&&typeof o==='object'&&!Array.isArray(o);
+function syncInto(t,s){
+  Object.keys(t).forEach(k=>{if(!(k in s))delete t[k];});
+  Object.keys(s).forEach(k=>{
+    const a=t[k],b=s[k];
+    if(isObj(a)&&isObj(b))syncInto(a,b);
+    else if(Array.isArray(a)&&Array.isArray(b)&&b.every(x=>x&&x.id)&&a.every(x=>x&&x.id)){
+      const byId=Object.fromEntries(a.map(x=>[x.id,x]));const out=b.map(x=>byId[x.id]?syncInto(byId[x.id],x):clone(x));
+      a.length=0;out.forEach(x=>a.push(x));
+    }else t[k]=clone(b);
+  });
+  return t;
+}
 /* fusion à trois : ce qui a changé ici depuis la dernière version connue du serveur l'emporte, le reste vient du serveur */
 function merge3(b,l,r){
   if(same(l,b))return clone(r);
@@ -595,7 +609,7 @@ async function flush(){
     if(got.error){failed=true;S.dirty.add(id);continue;}
     const remote=got.data&&got.data[0]?got.data[0].data:null,base=S.base[id];
     if(remote&&!same(remote,base)&&!same(remote,c)){
-      c=merge3(base,c,remote);c.updatedAt=Date.now();S.clients[id]=c;
+      const mg=merge3(base,c,remote);mg.updatedAt=Date.now();syncInto(c,mg);
       if(id===S.cur){if(!document.activeElement?.closest?.('#root'))renderAll();else renderClientSelect();}
     }
     const {error}=await S.sb.from('clients').upsert({id,nom:String(c.nom||''),data:c,updated_at:new Date(c.updatedAt||Date.now()).toISOString()});
@@ -614,7 +628,7 @@ async function loadAll(){
   data.forEach(r=>{const local=S.clients[r.id];
     if(S.dirty.has(r.id)&&local){m[r.id]=local;if(!S.base[r.id])S.base[r.id]=clone(r.data);}
     else if(local&&(local.updatedAt||0)>(r.data.updatedAt||0)){m[r.id]=local;S.base[r.id]=clone(r.data);S.dirty.add(r.id);}
-    else{m[r.id]=r.data;S.base[r.id]=clone(r.data);}});
+    else{m[r.id]=local?syncInto(local,r.data):r.data;S.base[r.id]=clone(r.data);}});
   // local-only dossiers not yet saved (created offline)
   Object.keys(S.clients).forEach(id=>{if(!m[id]&&S.dirty.has(id))m[id]=S.clients[id];});
   S.clients=m;saveCache();
@@ -635,7 +649,7 @@ function subscribe(){
       const r=p.new;if(!r||!r.data)return;
       const local=S.clients[r.id];
       if(S.dirty.has(r.id)||(local&&(local.updatedAt||0)>=(r.data.updatedAt||0)))return;
-      S.clients[r.id]=clone(r.data);S.base[r.id]=clone(r.data);afterRemote(r.id);
+      if(local)syncInto(local,r.data);else S.clients[r.id]=clone(r.data);S.base[r.id]=clone(r.data);afterRemote(r.id);
     }).subscribe();
 }
 async function removeClient(id){
@@ -762,10 +776,10 @@ function personHTML(p,n,c){
     <div class="top"><span class="lbl">${c.profil==='couple'?(n===1?'Personne 1':'Conjoint(e)'):'Client'}</span>
       <div class="seg" style="width:auto"><input type="radio" name="pm${n}" id="pm${n}a" value="age" ${p.mode!=='dob'?'checked':''}><label for="pm${n}a">Âge</label><input type="radio" name="pm${n}" id="pm${n}d" value="dob" ${p.mode==='dob'?'checked':''}><label for="pm${n}d">Date de naissance</label></div></div>
     <div class="row">
-      <div class="field ${p.mode==='dob'?'hide':''}" id="fa${n}"><label for="age${n}">Âge actuel</label><div class="inp"><input id="age${n}" type="number" inputmode="numeric" min="0" max="100" value="${esc(p.age)}"><span class="u">ans</span></div></div>
+      <div class="field ${p.mode==='dob'?'hide':''}" id="fa${n}"><label for="age${n}">Âge actuel</label><div class="inp"><input id="age${n}" type="text" inputmode="numeric" min="0" max="100" value="${esc(p.age)}"><span class="u">ans</span></div></div>
       <div class="field ${p.mode==='dob'?'':'hide'}" id="fd${n}"><label for="dob${n}">Date de naissance</label><div class="inp"><input id="dob${n}" type="date" value="${esc(p.dob)}"></div></div>
       <div class="field"><span class="lbl">Sexe</span><div class="seg"><input type="radio" name="sx${n}" id="sx${n}h" value="H" ${p.sexe!=='F'?'checked':''}><label for="sx${n}h">H</label><input type="radio" name="sx${n}" id="sx${n}f" value="F" ${p.sexe==='F'?'checked':''}><label for="sx${n}f">F</label></div></div>
-      <div class="field"><label for="fin${n}">Rachats jusqu'à</label><div class="inp"><input id="fin${n}" type="number" inputmode="numeric" value="${esc(fin)}"><span class="u">ans</span></div></div>
+      <div class="field"><label for="fin${n}">Rachats jusqu'à</label><div class="inp"><input id="fin${n}" type="text" inputmode="numeric" value="${esc(fin)}"><span class="u">ans</span></div></div>
     </div>
     <span class="agehint" id="ah${n}"></span>
   </div>`;
@@ -778,14 +792,14 @@ function clientCardHTML(c){
         <div class="field"><label for="cNom">Nom du client / référence</label><div class="inp"><input id="cNom" type="text" value="${esc(c.nom)}" style="font-size:16px"></div></div>
         <div class="seg"><input type="radio" name="prof" id="prS" value="seul" ${c.profil!=='couple'?'checked':''}><label for="prS">Personne seule</label><input type="radio" name="prof" id="prC" value="couple" ${c.profil==='couple'?'checked':''}><label for="prC">Couple</label></div>
         <div class="row">
-          <div class="field"><label for="cRet">Retraite à</label><div class="inp"><input id="cRet" type="number" inputmode="numeric" value="${esc(c.retraite)}"><span class="u">ans</span></div></div>
+          <div class="field"><label for="cRet">Retraite à</label><div class="inp"><input id="cRet" type="text" inputmode="numeric" value="${esc(c.retraite)}"><span class="u">ans</span></div></div>
         </div>
       </div>
       <div>${personHTML(c.p1,1,c)}</div>
       <div id="p2box" class="${c.profil==='couple'?'':'hide'}">${personHTML(c.p2,2,c)}</div>
       <div style="display:grid;gap:10px">
-        <div class="field"><label for="cCap">Capacité d'épargne max</label><div class="inp"><input id="cCap" type="number" inputmode="decimal" value="${esc(c.capacite)}" placeholder="${fE.format(sumM)} (leviers)"><span class="u">€/mois</span></div></div>
-        <div class="field"><label for="cKmax">Capital disponible max</label><div class="inp"><input id="cKmax" type="number" inputmode="decimal" value="${esc(c.capitalMax)}" placeholder="${fE.format(sumK)} (leviers)"><span class="u">€</span></div></div>
+        <div class="field"><label for="cCap">Capacité d'épargne max</label><div class="inp"><input id="cCap" type="text" inputmode="decimal" value="${esc(c.capacite)}" placeholder="${fE.format(sumM)} (leviers)"><span class="u">€/mois</span></div></div>
+        <div class="field"><label for="cKmax">Capital disponible max</label><div class="inp"><input id="cKmax" type="text" inputmode="decimal" value="${esc(c.capitalMax)}" placeholder="${fE.format(sumK)} (leviers)"><span class="u">€</span></div></div>
         <p class="note">Vide = somme des leviers. Sert à proposer les trois solutions.</p>
       </div>
     </div>
@@ -858,7 +872,7 @@ function renderLeverStrip(c,ctx){
 function curLever(c){return c.levers.find(L=>L.id===S.lever)||null;}
 
 function seg(name,opts,val,dis){return `<div class="seg">${opts.map(([v,l])=>`<input type="radio" name="${name}" id="${name}-${v}" value="${v}" ${v===val?'checked':''} ${dis?'disabled':''}><label for="${name}-${v}">${l}</label>`).join('')}</div>`;}
-function numField(id,label,val,unit,extra){return `<div class="field" id="w-${id}"><label for="${id}">${label}</label><div class="inp"><input id="${id}" type="number" inputmode="decimal" value="${esc(val)}" ${extra||''}><span class="u">${unit}</span></div></div>`;}
+function numField(id,label,val,unit,extra){return `<div class="field" id="w-${id}"><label for="${id}">${label}</label><div class="inp"><input id="${id}" type="text" inputmode="decimal" value="${esc(val)}" ${extra||''}><span class="u">${unit}</span></div></div>`;}
 
 function renderLeverEditor(c,ctx){
   const box=$('ledit');if(!box)return;const L=curLever(c);
@@ -917,11 +931,11 @@ function renderLeverEditor(c,ctx){
       </section>
       <section class="grp ${per?'':'hide'}" id="w-perfisc"><h2>Économie d'impôt <span class="tag">avis d'imposition</span></h2>
         ${(()=>{const f=fiscOf(c);return `
-        <div class="field" id="w-x-rev"><label for="x-rev">Revenu net imposable du foyer</label><div class="inp"><input id="x-rev" type="number" inputmode="decimal" value="${esc(f.rev)}" placeholder="ex. 40000"><span class="u">€ / an</span></div></div>
-        <div class="row">${`<div class="field"><label for="x-parts">Nombre de parts</label><div class="inp"><input id="x-parts" type="number" inputmode="decimal" step="0.5" min="1" value="${esc(f.parts)}"></div></div>`}
-          <div class="field"><label for="x-plafond">Plafond PER disponible</label><div class="inp"><input id="x-plafond" type="number" inputmode="decimal" value="${esc(f.plafond)}" placeholder="bas de l'avis"><span class="u">€</span></div></div></div>
+        <div class="field" id="w-x-rev"><label for="x-rev">Revenu net imposable du foyer</label><div class="inp"><input id="x-rev" type="text" inputmode="decimal" value="${esc(f.rev)}" placeholder="ex. 40000"><span class="u">€ / an</span></div></div>
+        <div class="row">${`<div class="field"><label for="x-parts">Nombre de parts</label><div class="inp"><input id="x-parts" type="text" inputmode="decimal" step="0.5" min="1" value="${esc(f.parts)}"></div></div>`}
+          <div class="field"><label for="x-plafond">Plafond PER disponible</label><div class="inp"><input id="x-plafond" type="text" inputmode="decimal" value="${esc(f.plafond)}" placeholder="bas de l'avis"><span class="u">€</span></div></div></div>
         <div class="field"><span class="lbl">Statut</span>${seg('x-statut',[['sal','Salarié / autre'],['tns','Indépendant']],f.statut)}</div>
-        <div class="field ${f.statut==='tns'?'':'hide'}" id="w-x-benef"><label for="x-benef">Bénéfice imposable (indépendant)</label><div class="inp"><input id="x-benef" type="number" inputmode="decimal" value="${esc(f.benef)}"><span class="u">€ / an</span></div></div>
+        <div class="field ${f.statut==='tns'?'':'hide'}" id="w-x-benef"><label for="x-benef">Bénéfice imposable (indépendant)</label><div class="inp"><input id="x-benef" type="text" inputmode="decimal" value="${esc(f.benef)}"><span class="u">€ / an</span></div></div>
         <p class="note">Communs à tout le dossier client. En couple, le plafond PER est celui de la personne qui verse (ou la somme des deux si mutualisation).</p>`;})()}
       </section>${actions}</form>
       <div class="results" id="lres"></div></div>`;
@@ -1179,8 +1193,8 @@ function renderTri(c,ctx,body){
   const T=c.tript||(c.tript={auto:true,pct1:50,pct2:75,rows:null});
   body.innerHTML=`<div class="deck">
     <div class="toolbar"><div class="params">
-      <div class="field"><label for="tp1">Solution 1 : part de la capacité</label><div class="inp"><input id="tp1" type="number" inputmode="decimal" value="${esc(T.pct1)}"><span class="u">%</span></div></div>
-      <div class="field"><label for="tp2">Solution 2 si aucun capital</label><div class="inp"><input id="tp2" type="number" inputmode="decimal" value="${esc(T.pct2)}"><span class="u">%</span></div></div>
+      <div class="field"><label for="tp1">Solution 1 : part de la capacité</label><div class="inp"><input id="tp1" type="text" inputmode="decimal" value="${esc(T.pct1)}"><span class="u">%</span></div></div>
+      <div class="field"><label for="tp2">Solution 2 si aucun capital</label><div class="inp"><input id="tp2" type="text" inputmode="decimal" value="${esc(T.pct2)}"><span class="u">%</span></div></div>
       <span class="note" id="triMode" style="align-self:center"></span>
     </div><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button class="btn" type="button" id="triAuto">Reproposer automatiquement</button><span class="msg" id="xMsg2"></span><button class="btn primary" type="button" id="xls2">Télécharger l'étude (Excel)</button></div></div>
     <div class="slide" id="triSlide"></div>
@@ -1197,7 +1211,7 @@ function renderMatrix(c,ctx){
   if(!c.levers.length){el.innerHTML='<p class="msg">Aucun levier.</p>';return;}
   const rows=triRows(c);
   el.innerHTML=`<table class="mx"><thead><tr><th>Levier</th><th>Solution 1</th><th>Solution 2</th><th>Solution 3</th></tr></thead><tbody>${c.levers.map(L=>`<tr><td class="lv">${esc(leverLabel(L))}</td>${[0,1,2].map(s=>{const it=rows[s][L.id];
-      const inputs=L.kind==='sim'?`${L.mv!=='capital'?`<div class="inp"><input data-s="${s}" data-l="${L.id}" data-f="mensuel" id="mx-${s}-${L.id}-m" type="number" inputmode="decimal" value="${Math.round(it.mensuel)}"><span class="u">€/mois</span></div>`:''}${L.mv!=='mensuel'?`<div class="inp"><input data-s="${s}" data-l="${L.id}" data-f="capital" id="mx-${s}-${L.id}-c" type="number" inputmode="decimal" value="${Math.round(it.capital)}"><span class="u">€</span></div>`:''}`:`<span class="rv">${esc(versText({mensuel:+L.mensuel,capital:+L.capital}))}</span>`;
+      const inputs=L.kind==='sim'?`${L.mv!=='capital'?`<div class="inp"><input data-s="${s}" data-l="${L.id}" data-f="mensuel" id="mx-${s}-${L.id}-m" type="text" inputmode="decimal" value="${Math.round(it.mensuel)}"><span class="u">€/mois</span></div>`:''}${L.mv!=='mensuel'?`<div class="inp"><input data-s="${s}" data-l="${L.id}" data-f="capital" id="mx-${s}-${L.id}-c" type="text" inputmode="decimal" value="${Math.round(it.capital)}"><span class="u">€</span></div>`:''}`:`<span class="rv">${esc(versText({mensuel:+L.mensuel,capital:+L.capital}))}</span>`;
       return `<td><div class="cell"><label class="switch"><input type="checkbox" data-s="${s}" data-l="${L.id}" data-f="on" id="mx-${s}-${L.id}-on" ${it.on?'checked':''}> Inclus</label>${inputs}<span class="rv" id="rv-${s}-${L.id}"></span></div></td>`;}).join('')}</tr>`).join('')}</tbody></table>`;
   el.oninput=e=>{
     const t=e.target;if(!t.dataset.s)return;

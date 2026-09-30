@@ -299,6 +299,30 @@ tr.custrow td{background:var(--navy-soft);border-bottom:2px solid var(--line)}
 .plafbox ol{margin:0;padding-left:20px;display:grid;gap:2px;color:var(--ink-2);font-size:13.5px;font-variant-numeric:tabular-nums}
 .plafbox .s{font-size:12.5px;color:var(--ink-3)}
 details.more summary{cursor:pointer;font-size:13px;color:var(--focus);font-weight:600}
+.printbar{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+#printArea{display:none}
+@media print{
+  @page{size:A4 landscape;margin:12mm}
+  :root,:root[data-theme="dark"],:root:not([data-theme="light"]){color-scheme:light;--bg:#fff;--surface:#fff;--ink:#121B2E;--ink-2:#4A5568;--line:#D6DCE5;--navy:#0E1A5C;--navy-ink:#fff;--row1:#DDE3EB;--row2:#CAD2DD;--rowt:#E8ECF1;--focus:#0E1A5C}
+  body.printing{background:#fff!important}
+  body.printing .wrap{display:none!important}
+  body.printing #printArea{display:block!important}
+  #printArea *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .ppage{break-after:page;page-break-after:always;display:flex;flex-direction:column;gap:6mm}
+  .ppage:last-child{break-after:auto;page-break-after:auto}
+  .phead{display:flex;justify-content:space-between;font-size:11pt;color:#4A5568;border-bottom:1px solid #D6DCE5;padding-bottom:3mm}
+  .ppage .slide{border:0;padding:0;gap:8mm}
+  .ppage .slide h2{font-size:24pt}
+  .ppage table.st{min-width:0;width:100%}
+  .ppage table.st th{font-size:13pt;padding:5mm 3mm}
+  .ppage table.st td{font-size:15pt;padding:5mm 3mm}
+  .ppage table.st .sub{font-size:10.5pt}
+  .ppage table.st.tri td{font-size:24pt;padding:8mm 3mm}
+  .ppage table.st.tri td.idx{font-size:32pt;color:#0E1A5C!important}
+  .ppage .args{font-size:13pt;padding:5mm 6mm}
+  .ppage .stw{overflow:visible}
+  .ppage tr{break-inside:avoid}
+}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 </head>
@@ -327,6 +351,7 @@ details.more summary{cursor:pointer;font-size:13px;color:var(--focus);font-weigh
 
   <div id="root"></div>
 </div>
+<div id="printArea" aria-hidden="true"></div>
 
 <script src="../config.js"></script>
 <script src="../vendor/supabase.js"></script>
@@ -1225,11 +1250,29 @@ function chiffreeData(c,ctx){
   return {lines,totVers:tv,totCap:lines.reduce((a,l)=>a+l.capR,0),totW:lines.reduce((a,l)=>a+l.W,0)};
 }
 function argsLines(c,totW){const pe=perEcoTotal(c);return [`Revenus à la retraite à hauteur de ${eurm(totW)}`,...(pe?[`Économie d'impôt de ${eur(pe.eco)}${pe.firstYear?' la 1re année':' par an'} grâce au PER, réinvestie sur le PER`]:[]),...String(c.args??DEF_ARGS).split('\n').map(s=>s.trim()).filter(Boolean)];}
+const showArgs=c=>c.showArgs!==false;
+function chiffreeHTML(c,ctx){
+  const d=chiffreeData(c,ctx);
+  return `<h2>Notre solution chiffrée</h2><div class="stw"><table class="st"><thead><tr><th>Leviers</th><th>Versements</th><th>Capital à ${esc(c.retraite)} ans</th><th>Revenus complémentaires<br>à la retraite</th></tr></thead><tbody>
+    ${d.lines.map(l=>`<tr><td>${esc(l.label)}${l.sub?`<span class="sub">${esc(l.sub)}</span>`:''}</td><td>${esc(l.vers)}</td><td>${eur(l.capR)}</td><td>${eurm(l.W)}${l.revSub?`<span class="sub">${esc(l.revSub)}</span>`:''}</td></tr>`).join('')}
+    <tr class="total"><td>TOTAL</td><td>${esc(d.totVers)}</td><td>${eur(d.totCap)}</td><td>${eurm(d.totW)}</td></tr></tbody></table></div>
+    ${showArgs(c)?`<div class="args">${argsLines(c,d.totW).map(x=>`<div>${esc(x)}</div>`).join('')}</div>`:''}`;
+}
+function triHTML(c,ctx){
+  const tr=triCompute(c,ctx);
+  return `<h2>Trois solutions</h2><div class="stw"><table class="st tri"><thead><tr><th></th><th>Capacité d'épargne mensuelle</th><th>Capital</th><th>Revenus complémentaires à la retraite</th></tr></thead><tbody>
+    ${tr.map((r,i)=>`<tr><td class="idx">${i+1}</td><td>${r.mensuel>0?eurm(r.mensuel):'/'}</td><td>${r.capital>0?eur(r.capital):'/'}</td><td>${eurm(r.W)}</td></tr>`).join('')}</tbody></table></div>`;
+}
+const printBar=id=>`<div class="printbar"><span class="lbl">Imprimer :</span><button class="btn" type="button" data-print="chiffree">Solution chiffrée</button><button class="btn" type="button" data-print="tri">Trois solutions</button><button class="btn" type="button" data-print="both">Les deux</button></div>`;
+function bindPrint(root){root.querySelectorAll('[data-print]').forEach(b=>b.onclick=()=>printStudy(b.dataset.print));}
 function renderChiffree(c,ctx,body){
-  body.innerHTML=`<div class="deck"><div class="toolbar"><p class="msg" style="margin:0">Généré à partir des leviers du client. Revenus bruts, hors fiscalité.</p><div style="display:flex;gap:8px;align-items:center"><span class="msg" id="xMsg1"></span><button class="btn primary" type="button" id="xls1">Télécharger l'étude (Excel)</button></div></div>
+  body.innerHTML=`<div class="deck"><div class="toolbar"><div style="display:grid;gap:8px"><p class="msg" style="margin:0">Généré à partir des leviers du client. Revenus bruts, hors fiscalité.</p>
+      <label class="switch"><input type="checkbox" id="showArgs" ${showArgs(c)?'checked':''}> Afficher le texte explicatif sous le tableau <span class="note">(utile en visio)</span></label></div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">${printBar()}<span class="msg" id="xMsg1"></span><button class="btn primary" type="button" id="xls1">Télécharger l'étude (Excel)</button></div></div>
     <div class="slide" id="chSlide"></div>
-    <div class="args-edit"><label class="lbl" for="argsTa">Arguments sous le tableau (une ligne par point ; la première ligne « Revenus à la retraite » est calculée)</label><textarea id="argsTa">${esc(c.args??DEF_ARGS)}</textarea></div></div>`;
-  $('xls1').onclick=()=>exportXlsx($('xMsg1'));
+    <div class="args-edit ${showArgs(c)?'':'hide'}" id="argsBox"><label class="lbl" for="argsTa">Arguments sous le tableau (une ligne par point ; la première ligne « Revenus à la retraite » est calculée)</label><textarea id="argsTa">${esc(c.args??DEF_ARGS)}</textarea></div></div>`;
+  $('xls1').onclick=()=>exportXlsx($('xMsg1'));bindPrint(body);
+  $('showArgs').addEventListener('input',e=>{c.showArgs=e.target.checked;$('argsBox').classList.toggle('hide',!c.showArgs);touch();renderChiffreeTable(c,ctxOf(c));});
   $('argsTa').addEventListener('input',e=>{c.args=e.target.value;touch();renderChiffreeTable(c,ctxOf(c));});
   renderChiffreeTable(c,ctx);
 }
@@ -1237,11 +1280,19 @@ function renderChiffreeTable(c,ctx){
   const el=$('chSlide');if(!el)return;
   if(ctx.errs.length){el.innerHTML=`<div class="alert err"><span class="dot"></span><span>${esc(ctx.errs.join(' '))}</span></div>`;return;}
   if(!c.levers.length){el.innerHTML=`<p class="msg">Ajoutez des leviers dans l'onglet Leviers pour générer la solution chiffrée.</p>`;return;}
-  const d=chiffreeData(c,ctx);
-  el.innerHTML=`<h2>Notre solution chiffrée</h2><div class="stw"><table class="st"><thead><tr><th>Leviers</th><th>Versements</th><th>Capital à ${esc(c.retraite)} ans</th><th>Revenus complémentaires<br>à la retraite</th></tr></thead><tbody>
-    ${d.lines.map(l=>`<tr><td>${esc(l.label)}${l.sub?`<span class="sub">${esc(l.sub)}</span>`:''}</td><td>${esc(l.vers)}</td><td>${eur(l.capR)}</td><td>${eurm(l.W)}${l.revSub?`<span class="sub">${esc(l.revSub)}</span>`:''}</td></tr>`).join('')}
-    <tr class="total"><td>TOTAL</td><td>${esc(d.totVers)}</td><td>${eur(d.totCap)}</td><td>${eurm(d.totW)}</td></tr></tbody></table></div>
-    <div class="args">${argsLines(c,d.totW).map(s=>`<div>${esc(s)}</div>`).join('')}</div>`;
+  el.innerHTML=chiffreeHTML(c,ctx);
+}
+/* ================= impression ================= */
+function printStudy(which){
+  const c=cur();if(!c)return;const ctx=ctxOf(c);if(ctx.errs.length||!c.levers.length)return;
+  const date=new Date().toLocaleDateString('fr-FR',{day:'numeric',month:'long',year:'numeric'});
+  const page=inner=>`<section class="ppage"><header class="phead"><span>${esc(c.nom||'')}</span><span>${date}</span></header><div class="slide">${inner}</div></section>`;
+  const pages=[];if(which!=='tri')pages.push(page(chiffreeHTML(c,ctx)));if(which!=='chiffree')pages.push(page(triHTML(c,ctx)));
+  const pa=$('printArea');pa.innerHTML=pages.join('');
+  document.body.classList.add('printing');
+  const done=()=>{document.body.classList.remove('printing');pa.innerHTML='';window.removeEventListener('afterprint',done);};
+  window.addEventListener('afterprint',done);
+  setTimeout(()=>window.print(),50);
 }
 
 /* ================= tab: trois solutions ================= */
@@ -1252,11 +1303,11 @@ function renderTri(c,ctx,body){
       <div class="field"><label for="tp1">Solution 1 : part de la capacité</label><div class="inp"><input id="tp1" type="text" inputmode="decimal" value="${esc(T.pct1)}"><span class="u">%</span></div></div>
       <div class="field"><label for="tp2">Solution 2 si aucun capital</label><div class="inp"><input id="tp2" type="text" inputmode="decimal" value="${esc(T.pct2)}"><span class="u">%</span></div></div>
       <span class="note" id="triMode" style="align-self:center"></span>
-    </div><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button class="btn" type="button" id="triAuto">Reproposer automatiquement</button><span class="msg" id="xMsg2"></span><button class="btn primary" type="button" id="xls2">Télécharger l'étude (Excel)</button></div></div>
+    </div><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button class="btn" type="button" id="triAuto">Reproposer automatiquement</button>${printBar()}<span class="msg" id="xMsg2"></span><button class="btn primary" type="button" id="xls2">Télécharger l'étude (Excel)</button></div></div>
     <div class="slide" id="triSlide"></div>
     <section class="card"><div class="card-h"><h3>Composer les solutions</h3><span class="note">Cochez les leviers de chaque solution et ajustez les montants ; le revenu se recalcule.</span></div><div class="matrix-w" id="mx"></div></section>
   </div>`;
-  $('xls2').onclick=()=>exportXlsx($('xMsg2'));
+  $('xls2').onclick=()=>exportXlsx($('xMsg2'));bindPrint(body);
   $('tp1').addEventListener('input',e=>{T.pct1=numv(e.target.value);touch();if(T.auto){renderMatrix(c,ctxOf(c));}renderTriOutput(c,ctxOf(c));});
   $('tp2').addEventListener('input',e=>{T.pct2=numv(e.target.value);touch();if(T.auto){renderMatrix(c,ctxOf(c));}renderTriOutput(c,ctxOf(c));});
   $('triAuto').onclick=()=>{T.auto=true;T.rows=null;touch();renderMatrix(c,ctxOf(c));renderTriOutput(c,ctxOf(c));};
@@ -1282,8 +1333,7 @@ function renderTriOutput(c,ctx){
   const tm=$('triMode');if(tm)tm.textContent=c.tript.auto?'Proposition automatique':'Solutions ajustées à la main';
   if(ctx.errs.length){el.innerHTML=`<div class="alert err"><span class="dot"></span><span>${esc(ctx.errs.join(' '))}</span></div>`;return;}
   const tr=triCompute(c,ctx);
-  el.innerHTML=`<h2>Trois solutions</h2><div class="stw"><table class="st tri"><thead><tr><th></th><th>Capacité d'épargne mensuelle</th><th>Capital</th><th>Revenus complémentaires à la retraite</th></tr></thead><tbody>
-    ${tr.map((r,i)=>`<tr><td class="idx">${i+1}</td><td>${r.mensuel>0?eurm(r.mensuel):'/'}</td><td>${r.capital>0?eur(r.capital):'/'}</td><td>${eurm(r.W)}</td></tr>`).join('')}</tbody></table></div>`;
+  el.innerHTML=triHTML(c,ctx);
   tr.forEach((r,s)=>c.levers.forEach(L=>{const sp=$(`rv-${s}-${L.id}`);if(sp){const o=r.cells[L.id];sp.textContent=o?`→ ${eurm(o.W)}`:'';}}));
 }
 
@@ -1325,7 +1375,7 @@ async function exportXlsx(msgEl){
   });
   w1.getRow(r).values=['TOTAL',d.totVers,Math.round(d.totCap),Math.round(d.totW)];body(w1,r,GT,true);w1.getRow(r).getCell(3).numFmt=fmtE;w1.getRow(r).getCell(4).numFmt=fmtM;w1.getRow(r).height=26;
   r+=2;
-  argsLines(c,d.totW).forEach(s=>{w1.mergeCells(r,1,r,4);const cl=w1.getCell(r,1);cl.value='•  '+s;cl.fill={type:'pattern',pattern:'solid',fgColor:{argb:NAVY}};cl.font={color:{argb:WHITE},size:12};cl.alignment={horizontal:'center',vertical:'middle',wrapText:true};w1.getRow(r).height=22;r++;});
+  (showArgs(c)?argsLines(c,d.totW):[]).forEach(s=>{w1.mergeCells(r,1,r,4);const cl=w1.getCell(r,1);cl.value='•  '+s;cl.fill={type:'pattern',pattern:'solid',fgColor:{argb:NAVY}};cl.font={color:{argb:WHITE},size:12};cl.alignment={horizontal:'center',vertical:'middle',wrapText:true};w1.getRow(r).height=22;r++;});
 
   // 2. Trois solutions
   const tr=triCompute(c,ctx);

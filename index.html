@@ -289,6 +289,40 @@ tr.custrow td{background:var(--navy-soft);border-bottom:2px solid var(--line)}
 .taxgrid .hl{background:var(--teal-soft);border-color:transparent} .taxgrid .hl .v{color:var(--teal)}
 .advice{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:10px;margin-top:12px;padding:12px 14px;border-radius:10px;background:var(--navy-soft)}
 .advice .s{display:block;font-size:12.5px;color:var(--ink-2);margin-top:2px}
+.verdict{display:grid;gap:3px;border-radius:10px;padding:12px 14px;margin-bottom:12px;border-left:4px solid}
+.verdict b{font-size:17px} .verdict span{font-size:14px;color:var(--ink-2)}
+.v-ok{background:var(--teal-soft);border-color:var(--teal)} .v-ok b{color:var(--teal)}
+.v-warn{background:var(--amber-soft);border-color:var(--amber)} .v-warn b{color:var(--amber)}
+.v-err{background:var(--red-soft);border-color:var(--red)} .v-err b{color:var(--red)}
+.vnote{font-size:13.5px;margin:-4px 0 12px;color:var(--ink);background:var(--amber-soft);border-radius:8px;padding:8px 12px}
+.plafbox{background:var(--surface-2);border-radius:10px;padding:12px 14px;display:grid;gap:6px;font-size:14px}
+.plafbox ol{margin:0;padding-left:20px;display:grid;gap:2px;color:var(--ink-2);font-size:13.5px;font-variant-numeric:tabular-nums}
+.plafbox .s{font-size:12.5px;color:var(--ink-3)}
+details.more summary{cursor:pointer;font-size:13px;color:var(--focus);font-weight:600}
+.printbar{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+#printArea{display:none}
+@media print{
+  @page{size:A4 landscape;margin:12mm}
+  :root,:root[data-theme="dark"],:root:not([data-theme="light"]){color-scheme:light;--bg:#fff;--surface:#fff;--ink:#121B2E;--ink-2:#4A5568;--line:#D6DCE5;--navy:#0E1A5C;--navy-ink:#fff;--row1:#DDE3EB;--row2:#CAD2DD;--rowt:#E8ECF1;--focus:#0E1A5C}
+  body.printing{background:#fff!important}
+  body.printing .wrap{display:none!important}
+  body.printing #printArea{display:block!important}
+  #printArea *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .ppage{break-after:page;page-break-after:always;display:flex;flex-direction:column;gap:6mm}
+  .ppage:last-child{break-after:auto;page-break-after:auto}
+  .phead{display:flex;justify-content:space-between;font-size:11pt;color:#4A5568;border-bottom:1px solid #D6DCE5;padding-bottom:3mm}
+  .ppage .slide{border:0;padding:0;gap:8mm}
+  .ppage .slide h2{font-size:24pt}
+  .ppage table.st{min-width:0;width:100%}
+  .ppage table.st th{font-size:13pt;padding:5mm 3mm}
+  .ppage table.st td{font-size:15pt;padding:5mm 3mm}
+  .ppage table.st .sub{font-size:10.5pt}
+  .ppage table.st.tri td{font-size:24pt;padding:8mm 3mm}
+  .ppage table.st.tri td.idx{font-size:32pt;color:#0E1A5C!important}
+  .ppage .args{font-size:13pt;padding:5mm 6mm}
+  .ppage .stw{overflow:visible}
+  .ppage tr{break-inside:avoid}
+}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 </head>
@@ -317,6 +351,7 @@ tr.custrow td{background:var(--navy-soft);border-bottom:2px solid var(--line)}
 
   <div id="root"></div>
 </div>
+<div id="printArea" aria-hidden="true"></div>
 
 <script src="config.js"></script>
 <script src="vendor/supabase.js"></script>
@@ -381,21 +416,48 @@ function impot(R,parts,couple){
   if(T<lim)T=Math.max(0,T-(f-0.4525*T));
   return Math.round(T);
 }
-function fiscOf(c){return c.fisc||(c.fisc={rev:'',parts:c.profil==='couple'?2:1,plafond:'',statut:'sal',benef:''});}
+const PASS_2025=47100;
+function fiscOf(c){const f=c.fisc||(c.fisc={});if(f.parts==null)f.parts=c.profil==='couple'?2:1;if(!f.statut)f.statut='sal';['rev','plafond','benef','salaire'].forEach(k=>{if(f[k]==null)f[k]='';});return f;}
 function perAnnual(L){return (L.mv==='capital'?0:(+L.mensuel||0)*12)+(L.mv==='mensuel'?0:(+L.capital||0));}
+function abat10(S){return Math.min(14555,Math.max(509,Math.round(S*0.1)));}
+/* plafond PER : salarié = 10 % du salaire après abattement de 10 % (mini 10 % PASS 2025, maxi 10 % de 8 PASS 2025) ;
+   indépendant = 10 % du PASS 2026 + 25 % du bénéfice au-delà d'1 PASS (bénéfice retenu dans la limite de 8 PASS) */
+function perPlafond(f){
+  const steps=[];let calc=0;
+  if(f.statut==='tns'){
+    const B=+f.benef||0;if(B>0){const P=PASS_2026,b=Math.min(B,8*P),over=Math.max(0,b-P);
+      calc=Math.round(Math.max(0.1*P,0.1*P+0.25*over));
+      steps.push(`Bénéfice ${eur(B)}${B>8*P?` (retenu à 8 PASS : ${eur(b)})`:''} − 1 PASS ${eur(P)} = ${eur(over)}`);
+      steps.push(`${eur(over)} × 25 % = ${eur(0.25*over)}`);
+      steps.push(`+ 10 % du PASS ${eur(0.1*P)} = <b>${eur(calc)} / an</b>, soit ${eurm(Math.floor(calc/12))}`);}
+  }else{
+    const S=+f.salaire||0;if(S>0){const a=abat10(S),net=S-a,raw=Math.round(net*0.1),mn=Math.round(0.1*PASS_2025),mx=Math.round(0.8*PASS_2025);
+      calc=Math.min(mx,Math.max(mn,raw));
+      steps.push(`Salaire ${eur(S)} − abattement 10 % (${eur(a)}) = ${eur(net)}`);
+      steps.push(`${eur(net)} × 10 % = ${eur(raw)}`);
+      if(raw<mn)steps.push(`Minimum 10 % du PASS 2025 : <b>${eur(mn)} / an</b>, soit ${eurm(Math.floor(mn/12))}`);
+      else if(raw>mx)steps.push(`Maximum 10 % de 8 PASS 2025 : <b>${eur(mx)} / an</b>`);
+      else steps[1]=`${eur(net)} × 10 % = <b>${eur(calc)} / an</b>, soit ${eurm(Math.floor(calc/12))}`;}
+  }
+  const avis=+f.plafond||0;
+  return {calc,avis,plaf:avis||calc,steps,source:avis?'avis':'calcul'};
+}
+function perRevenu(f){if(+f.rev>0)return {R:+f.rev,auto:false};
+  if(f.statut==='tns'&&+f.benef>0)return {R:+f.benef,auto:true};
+  if(f.statut!=='tns'&&+f.salaire>0)return {R:+f.salaire-abat10(+f.salaire),auto:true};
+  return {R:0,auto:false};}
 function perFiscal(c,annual){
-  const f=fiscOf(c);const R=+f.rev||0;if(!R)return null;
+  const f=fiscOf(c);const rv=perRevenu(f);const R=rv.R;if(!R)return null;
   const couple=c.profil==='couple',parts=Math.max(+f.parts||1,couple?2:1);
   const q=R/parts,tmi=tmiOf(q);
-  const avant=impot(R,parts,couple),apres=impot(R-annual,parts,couple),eco=avant-apres;
+  const avant=impot(R,parts,couple),apres=impot(R-Math.min(annual,R),parts,couple),eco=avant-apres;
   const utile=tmi>=.30?Math.round((q-29579)*parts):0;
-  let plafPro=0;const B=+f.benef||0;
-  if(f.statut==='tns'&&B>0){const P=PASS_2026,b=Math.min(B,8*P);plafPro=Math.round(Math.max(0.1*P,0.1*b+0.15*Math.max(0,b-P)));}
-  const plafPerso=+f.plafond||0;const plaf=plafPerso+plafPro;
+  const pl=perPlafond(f);const plaf=pl.plaf;
   const capa=+c.capacite>0?+c.capacite*12:0;
   const cands=[utile];if(plaf)cands.push(plaf);if(capa)cands.push(capa);
   const conseil=utile>0?Math.min(...cands):0;
-  return {R,parts,tmi,avant,apres,eco,utile,plafPerso,plafPro,plaf,conseil,annual,over:plaf&&annual>plaf};
+  const limit=conseil===utile?'tranche':conseil===plaf?'plafond':'capacite';
+  return {R,revAuto:rv.auto,parts,tmi,avant,apres,eco,utile,pl,plaf,capa,conseil,limit,annual,over:plaf&&annual>plaf};
 }
 function perEcoTotal(c){
   const pers=c.levers.filter(L=>L.kind==='sim'&&L.produit==='PER');if(!pers.length)return null;
@@ -864,7 +926,8 @@ function renderLeverStrip(c,ctx){
   el.innerHTML=c.levers.map(L=>{
     let f='';
     if(!ctx.errs.length){const o=leverOut(L,ctx);f=`${esc(versText(o))} · <b>${kEur(o.capR)}</b> · <b>${eurm(o.W)}</b>`;}
-    const pill=L.kind==='manuel'?'Manuel':L.kind==='scpi'?'SCPI':L.produit;
+    let pill=L.kind==='manuel'?'Manuel':L.kind==='scpi'?'SCPI':L.produit;
+    if(L.kind==='sim'&&L.produit==='PER'){const pf=perFiscal(c,perAnnual(L));if(pf)pill+=pf.tmi>=.30?' · ✓ utile':pf.tmi>0?' · peu utile':' · inutile';}
     return `<button type="button" class="lcard" aria-pressed="${L.id===S.lever}" data-l="${L.id}"><span class="t"><span>${esc(leverLabel(L))}</span><span class="pill">${pill}</span></span><span class="f">${f}</span></button>`;
   }).join('');
   el.querySelectorAll('[data-l]').forEach(b=>b.onclick=()=>{S.lever=b.dataset.l;renderLeverStrip(c,ctxOf(c));renderLeverEditor(c,ctxOf(c));});
@@ -929,14 +992,19 @@ function renderLeverEditor(c,ctx){
           <p class="note">Sur la part de plus-value de chaque rachat. Contrat de plus de 8 ans : abattement annuel de ${ctx.couple?'9 200':'4 600'} €, puis 7,5 % (12,8 % sur la fraction des primes au-delà de ${ctx.couple?'300 000':'150 000'} €). Avant 8 ans : 12,8 %.</p></div>
         <p class="note ${per?'':'hide'}" id="perNote">PER : fiscalité de sortie non modélisée (impôt sur le revenu sur les versements déduits, prélèvement forfaitaire sur les gains). Montants bruts.</p>
       </section>
-      <section class="grp ${per?'':'hide'}" id="w-perfisc"><h2>Économie d'impôt <span class="tag">avis d'imposition</span></h2>
-        ${(()=>{const f=fiscOf(c);return `
-        <div class="field" id="w-x-rev"><label for="x-rev">Revenu net imposable du foyer</label><div class="inp"><input id="x-rev" type="text" inputmode="decimal" value="${esc(f.rev)}" placeholder="ex. 40000"><span class="u">€ / an</span></div></div>
-        <div class="row">${`<div class="field"><label for="x-parts">Nombre de parts</label><div class="inp"><input id="x-parts" type="text" inputmode="decimal" step="0.5" min="1" value="${esc(f.parts)}"></div></div>`}
-          <div class="field"><label for="x-plafond">Plafond PER disponible</label><div class="inp"><input id="x-plafond" type="text" inputmode="decimal" value="${esc(f.plafond)}" placeholder="bas de l'avis"><span class="u">€</span></div></div></div>
-        <div class="field"><span class="lbl">Statut</span>${seg('x-statut',[['sal','Salarié / autre'],['tns','Indépendant']],f.statut)}</div>
-        <div class="field ${f.statut==='tns'?'':'hide'}" id="w-x-benef"><label for="x-benef">Bénéfice imposable (indépendant)</label><div class="inp"><input id="x-benef" type="text" inputmode="decimal" value="${esc(f.benef)}"><span class="u">€ / an</span></div></div>
-        <p class="note">Communs à tout le dossier client. En couple, le plafond PER est celui de la personne qui verse (ou la somme des deux si mutualisation).</p>`;})()}
+      <section class="grp ${per?'':'hide'}" id="w-perfisc"><h2>Plafond PER & économie d'impôt</h2>
+        ${(()=>{const f=fiscOf(c);const rv=perRevenu(f);const pl=perPlafond(f);return `
+        <div class="field"><span class="lbl">Statut</span>${seg('x-statut',[['sal','Salarié'],['tns','Indépendant']],f.statut)}</div>
+        <div class="field ${f.statut==='tns'?'hide':''}" id="w-x-salaire"><label for="x-salaire">Salaire net imposable annuel</label><div class="inp"><input id="x-salaire" type="text" inputmode="decimal" value="${esc(f.salaire)}" placeholder="ex. 58 000"><span class="u">€ / an</span></div></div>
+        <div class="field ${f.statut==='tns'?'':'hide'}" id="w-x-benef"><label for="x-benef">Bénéfice imposable annuel</label><div class="inp"><input id="x-benef" type="text" inputmode="decimal" value="${esc(f.benef)}" placeholder="ex. 58 000"><span class="u">€ / an</span></div></div>
+        <div class="field"><label for="x-parts">Nombre de parts du foyer</label><div class="inp"><input id="x-parts" type="text" inputmode="decimal" value="${esc(f.parts)}"></div></div>
+        <details class="more"><summary>Affiner avec l'avis d'imposition (facultatif)</summary>
+          <div style="display:grid;gap:10px;margin-top:10px">
+          <div class="field"><label for="x-rev">Revenu net imposable du foyer</label><div class="inp"><input id="x-rev" type="text" inputmode="decimal" value="${esc(f.rev)}" placeholder="${rv.auto?fE.format(rv.R)+' (calculé)':'avis d\'imposition'}"><span class="u">€ / an</span></div></div>
+          <div class="field"><label for="x-plafond">Plafond PER indiqué sur l'avis</label><div class="inp"><input id="x-plafond" type="text" inputmode="decimal" value="${esc(f.plafond)}" placeholder="${pl.calc?fE.format(pl.calc)+' (calculé)':'bas de l\'avis'}"><span class="u">€</span></div></div>
+          <p class="note">Si renseignés, ils remplacent les valeurs calculées (utile si le foyer a d'autres revenus ou des plafonds non utilisés reportés).</p></div>
+        </details>
+        <p class="note">Communs à tout le dossier client.</p>`;})()}
       </section>${actions}</form>
       <div class="results" id="lres"></div></div>`;
   }
@@ -959,7 +1027,9 @@ function bindLeverForm(c,L){
   f.addEventListener('input',e=>{
     const t=e.target,k=(t.name||t.id).replace(/^l-/,'');
     if(/^x-/.test(t.name||t.id)){const f=fiscOf(c),key=(t.name||t.id).slice(2);f[key]=key==='statut'?t.value:(t.value===''?'':numv(t.value));
-      const wb=$('w-x-benef');if(wb)wb.classList.toggle('hide',f.statut!=='tns');touch();const cx=ctxOf(c);renderLeverResults(c,cx);return;}
+      const wb=$('w-x-benef');if(wb)wb.classList.toggle('hide',f.statut!=='tns');const ws=$('w-x-salaire');if(ws)ws.classList.toggle('hide',f.statut==='tns');
+      const rv=perRevenu(f),pl=perPlafond(f);const xr=$('x-rev');if(xr)xr.placeholder=rv.auto?fE.format(rv.R)+' (calculé)':'avis d\'imposition';const xp=$('x-plafond');if(xp)xp.placeholder=pl.calc?fE.format(pl.calc)+' (calculé)':'bas de l\'avis';
+      touch();const cx=ctxOf(c);renderLeverStrip(c,cx);renderLeverResults(c,cx);return;}
     const map={ret15:'ret15',ret20:'ret20',ret25:'ret25',cap15:'cap15',cap20:'cap20',cap25:'cap25',label:'label',mensuel:'mensuel',capital:'capital',capR:'capRetraite',rev:'revenu',deb:'debutAge',sub:'sub',idx:'idx',fixe:'fixe',r:'r',fg:'fg',fv:'fv',ps:'ps'};
     if(k==='duree'){L.duree=+t.value;if(!scpiLook(L)){const r=SCPI_TABLE.find(r=>r[SCPI_COL[L.duree]]!=null);if(r)L.projet=r[0];}renderLeverEditor(c,ctxOf(c));touch();renderLeverStrip(c,ctxOf(c));return;}
     else if(k==='projet')L.projet=+t.value;
@@ -1085,21 +1155,32 @@ function renderLeverResults(c,ctx){
 }
 function perCardHTML(c,L){
   const annual=perAnnual(L);const r=perFiscal(c,annual);
-  if(!r)return `<section class="card taxcard"><div class="card-h"><h3>Économie d'impôt</h3></div><p class="msg" style="margin:0">Renseignez le revenu net imposable et le nombre de parts (bloc « Économie d'impôt » à gauche) pour voir l'intérêt fiscal du PER.</p></section>`;
+  if(!r)return `<section class="card taxcard"><div class="card-h"><h3>Plafond PER & économie d'impôt</h3></div><p class="msg" style="margin:0">Choisissez le statut et saisissez le salaire (ou le bénéfice) dans le bloc « Plafond PER & économie d'impôt » à gauche : l'outil calcule le plafond, l'impôt et le versement optimisé.</p></section>`;
   const lvl=r.tmi>=.30?['ok','Intéressant']:r.tmi>0?['warn','Peu intéressant']:['err','Inutile : pas d\'impôt'];
-  const men=Math.round(annual/12);
-  const why=r.tmi>=.30?`Chaque euro versé jusqu'à ${eur(r.utile)} par an fait économiser ${Math.round(r.tmi*100)} %.`:r.tmi>0?'Le client est dans la tranche à 11 % : l\'économie est faible et l\'argent reste bloqué jusqu\'à la retraite.':'Le client ne paie pas d\'impôt : le versement ne lui fait rien économiser.';
-  return `<section class="card taxcard"><div class="card-h"><h3>Économie d'impôt</h3><span class="pill-${lvl[0]}">TMI ${Math.round(r.tmi*100)} % · ${lvl[1]}</span></div>
-    <p class="msg" style="margin:0 0 12px">${why}</p>
+  const men=Math.round(annual/12),hasCap=L.mv!=='mensuel'&&+L.capital>0;
+  const why=r.tmi>=.30?`Chaque euro versé jusqu'à ${eur(r.utile)} par an fait économiser ${Math.round(r.tmi*100)} %.`:r.tmi>0?'Tranche à 11 % : l\'économie est faible et l\'argent reste bloqué jusqu\'à la retraite.':'Pas d\'impôt : le versement ne fait rien économiser.';
+  const plTitle=r.pl.source==='avis'?`Plafond retenu : <b>${eur(r.plaf)} / an</b> (avis d'imposition)`:`Plafond ${fiscOf(c).statut==='tns'?'indépendant':'salarié'} : <b>${r.plaf?eur(r.plaf)+' / an':'—'}</b>`;
+  const limTxt={tranche:'limité par la tranche à 30 % et plus',plafond:'limité par le plafond PER',capacite:'limité par la capacité d\'épargne'}[r.limit];
+  const t=Math.round(r.tmi*100);
+  const V=r.tmi>=.41?['ok','Oui, le PER vaut vraiment le coup',`Le client est dans la tranche à ${t} % : chaque 100 € versés sur le PER font baisser son impôt de ${t} €.`]
+    :r.tmi>=.30?['ok','Oui, le PER vaut le coup',`Le client est dans la tranche à 30 % : chaque 100 € versés font baisser son impôt de 30 €, dans la limite de ${eur(r.utile)} par an (au-delà, il repasse dans la tranche à 11 %).`]
+    :r.tmi>0?['warn','Peu intéressant',`Le client est dans la tranche à 11 % : 100 € versés ne font économiser que 11 €, et l'argent reste bloqué jusqu'à la retraite. Mieux vaut en général l'assurance vie.`]
+    :['err','Non, pas de PER',`Le client ne paie pas d'impôt sur le revenu : le PER ne lui ferait rien économiser. Privilégier l'assurance vie.`];
+  const partial=r.tmi>=.30&&annual>r.utile&&r.utile>0?`<p class="vnote">Attention : le versement actuel (${eur(annual)} / an) dépasse la part du revenu dans la tranche à ${t} % (${eur(r.utile)}). Au-delà, chaque euro ne rapporte plus que ${r.tmi>=.41?'30':'11'} %. Économie réelle : ${eur(r.eco)}, soit ${Math.round(r.eco/annual*100)} % du versement.</p>`:'';
+  return `<section class="card taxcard"><div class="card-h"><h3>Plafond PER & économie d'impôt</h3><span class="pill-${lvl[0]}">TMI ${t} % · ${lvl[1]}</span></div>
+    <div class="verdict v-${V[0]}"><b>${V[1]}</b><span>${V[2]}</span></div>${partial}
+    <div class="plafbox"><div>${plTitle}</div>${r.pl.source==='calcul'&&r.pl.steps.length?`<ol>${r.pl.steps.map(x=>`<li>${x}</li>`).join('')}</ol>`:''}
+      <div class="s">Revenu imposable retenu : ${eur(r.R)}${r.revAuto?' (calculé, sans autres revenus du foyer)':''} · ${String(r.parts).replace('.',',')} part${r.parts>1?'s':''}</div></div>
+    ${r.conseil>0?`<div class="advice"><div><b>Versement PER optimisé : ${eur(r.conseil)} / an</b>, soit ${eurm(Math.floor(r.conseil/12))}<span class="s">${limTxt} · économie d'impôt : ${eur(impot(r.R,r.parts,c.profil==='couple')-impot(r.R-r.conseil,r.parts,c.profil==='couple'))} / an</span></div>
+      <button type="button" class="btn primary" id="perApply">Appliquer ${eurm(Math.floor(r.conseil/12))}</button></div>`:''}
+    <div style="height:12px"></div>
     <div class="taxgrid">
       <div><span class="k">Versé sur le PER</span><span class="v">${eur(annual)} / an</span><span class="s">${L.mv!=='capital'?eurm(men):''}${L.mv==='both'&&+L.capital>0?' + versement initial':''}</span></div>
       <div><span class="k">Impôt sans / avec PER</span><span class="v">${eur(r.avant)} → ${eur(r.apres)}</span><span class="s">barème 2026</span></div>
-      <div class="hl"><span class="k">Économie d'impôt</span><span class="v">${eur(r.eco)}${L.mv!=='mensuel'&&+L.capital>0?'':' / an'}</span><span class="s">${L.mv!=='mensuel'&&+L.capital>0?'la 1re année':'chaque année'}</span></div>
+      <div class="hl"><span class="k">Économie d'impôt</span><span class="v">${eur(r.eco)}${hasCap?'':' / an'}</span><span class="s">${hasCap?'la 1re année':'chaque année'}</span></div>
       <div><span class="k">Effort réel</span><span class="v">${L.mv==='capital'?eur(annual-r.eco):eurm((annual-r.eco)/12)}</span><span class="s">versement − économie</span></div>
     </div>
-    ${r.over?`<div class="alert warn" style="margin-top:12px"><span class="dot"></span><span>Le versement dépasse le plafond PER disponible (${eur(r.plaf)}) : l'excédent n'est pas déductible.</span></div>`:''}
-    ${r.utile>0?`<div class="advice"><div><b>Montant conseillé : ${eur(r.conseil)} / an</b>, soit ${eurm(r.conseil/12)}<span class="s">le plus petit entre la tranche à 30 % et plus (${eur(r.utile)})${r.plaf?`, le plafond (${eur(r.plaf)}${r.plafPro?`, dont ${eur(r.plafPro)} côté pro`:''})`:''}${+c.capacite>0?` et la capacité d'épargne (${eur(+c.capacite*12)})`:''}</span></div>
-      <button type="button" class="btn primary" id="perApply">Appliquer ${eurm(Math.floor(r.conseil/12))}</button></div>`:''}
+    ${r.over?`<div class="alert warn" style="margin-top:12px"><span class="dot"></span><span>Le versement dépasse le plafond PER (${eur(r.plaf)}) : l'excédent n'est pas déductible.</span></div>`:''}
   </section>`;
 }
 function yearTable(res,taxes,fisc,ctx){
@@ -1169,11 +1250,29 @@ function chiffreeData(c,ctx){
   return {lines,totVers:tv,totCap:lines.reduce((a,l)=>a+l.capR,0),totW:lines.reduce((a,l)=>a+l.W,0)};
 }
 function argsLines(c,totW){const pe=perEcoTotal(c);return [`Revenus à la retraite à hauteur de ${eurm(totW)}`,...(pe?[`Économie d'impôt de ${eur(pe.eco)}${pe.firstYear?' la 1re année':' par an'} grâce au PER, réinvestie sur le PER`]:[]),...String(c.args??DEF_ARGS).split('\n').map(s=>s.trim()).filter(Boolean)];}
+const showArgs=c=>c.showArgs!==false;
+function chiffreeHTML(c,ctx){
+  const d=chiffreeData(c,ctx);
+  return `<h2>Notre solution chiffrée</h2><div class="stw"><table class="st"><thead><tr><th>Leviers</th><th>Versements</th><th>Capital à ${esc(c.retraite)} ans</th><th>Revenus complémentaires<br>à la retraite</th></tr></thead><tbody>
+    ${d.lines.map(l=>`<tr><td>${esc(l.label)}${l.sub?`<span class="sub">${esc(l.sub)}</span>`:''}</td><td>${esc(l.vers)}</td><td>${eur(l.capR)}</td><td>${eurm(l.W)}${l.revSub?`<span class="sub">${esc(l.revSub)}</span>`:''}</td></tr>`).join('')}
+    <tr class="total"><td>TOTAL</td><td>${esc(d.totVers)}</td><td>${eur(d.totCap)}</td><td>${eurm(d.totW)}</td></tr></tbody></table></div>
+    ${showArgs(c)?`<div class="args">${argsLines(c,d.totW).map(x=>`<div>${esc(x)}</div>`).join('')}</div>`:''}`;
+}
+function triHTML(c,ctx){
+  const tr=triCompute(c,ctx);
+  return `<h2>Trois solutions</h2><div class="stw"><table class="st tri"><thead><tr><th></th><th>Capacité d'épargne mensuelle</th><th>Capital</th><th>Revenus complémentaires à la retraite</th></tr></thead><tbody>
+    ${tr.map((r,i)=>`<tr><td class="idx">${i+1}</td><td>${r.mensuel>0?eurm(r.mensuel):'/'}</td><td>${r.capital>0?eur(r.capital):'/'}</td><td>${eurm(r.W)}</td></tr>`).join('')}</tbody></table></div>`;
+}
+const printBar=id=>`<div class="printbar"><span class="lbl">Imprimer :</span><button class="btn" type="button" data-print="chiffree">Solution chiffrée</button><button class="btn" type="button" data-print="tri">Trois solutions</button><button class="btn" type="button" data-print="both">Les deux</button></div>`;
+function bindPrint(root){root.querySelectorAll('[data-print]').forEach(b=>b.onclick=()=>printStudy(b.dataset.print));}
 function renderChiffree(c,ctx,body){
-  body.innerHTML=`<div class="deck"><div class="toolbar"><p class="msg" style="margin:0">Généré à partir des leviers du client. Revenus bruts, hors fiscalité.</p><div style="display:flex;gap:8px;align-items:center"><span class="msg" id="xMsg1"></span><button class="btn primary" type="button" id="xls1">Télécharger l'étude (Excel)</button></div></div>
+  body.innerHTML=`<div class="deck"><div class="toolbar"><div style="display:grid;gap:8px"><p class="msg" style="margin:0">Généré à partir des leviers du client. Revenus bruts, hors fiscalité.</p>
+      <label class="switch"><input type="checkbox" id="showArgs" ${showArgs(c)?'checked':''}> Afficher le texte explicatif sous le tableau <span class="note">(utile en visio)</span></label></div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">${printBar()}<span class="msg" id="xMsg1"></span><button class="btn primary" type="button" id="xls1">Télécharger l'étude (Excel)</button></div></div>
     <div class="slide" id="chSlide"></div>
-    <div class="args-edit"><label class="lbl" for="argsTa">Arguments sous le tableau (une ligne par point ; la première ligne « Revenus à la retraite » est calculée)</label><textarea id="argsTa">${esc(c.args??DEF_ARGS)}</textarea></div></div>`;
-  $('xls1').onclick=()=>exportXlsx($('xMsg1'));
+    <div class="args-edit ${showArgs(c)?'':'hide'}" id="argsBox"><label class="lbl" for="argsTa">Arguments sous le tableau (une ligne par point ; la première ligne « Revenus à la retraite » est calculée)</label><textarea id="argsTa">${esc(c.args??DEF_ARGS)}</textarea></div></div>`;
+  $('xls1').onclick=()=>exportXlsx($('xMsg1'));bindPrint(body);
+  $('showArgs').addEventListener('input',e=>{c.showArgs=e.target.checked;$('argsBox').classList.toggle('hide',!c.showArgs);touch();renderChiffreeTable(c,ctxOf(c));});
   $('argsTa').addEventListener('input',e=>{c.args=e.target.value;touch();renderChiffreeTable(c,ctxOf(c));});
   renderChiffreeTable(c,ctx);
 }
@@ -1181,11 +1280,19 @@ function renderChiffreeTable(c,ctx){
   const el=$('chSlide');if(!el)return;
   if(ctx.errs.length){el.innerHTML=`<div class="alert err"><span class="dot"></span><span>${esc(ctx.errs.join(' '))}</span></div>`;return;}
   if(!c.levers.length){el.innerHTML=`<p class="msg">Ajoutez des leviers dans l'onglet Leviers pour générer la solution chiffrée.</p>`;return;}
-  const d=chiffreeData(c,ctx);
-  el.innerHTML=`<h2>Notre solution chiffrée</h2><div class="stw"><table class="st"><thead><tr><th>Leviers</th><th>Versements</th><th>Capital à ${esc(c.retraite)} ans</th><th>Revenus complémentaires<br>à la retraite</th></tr></thead><tbody>
-    ${d.lines.map(l=>`<tr><td>${esc(l.label)}${l.sub?`<span class="sub">${esc(l.sub)}</span>`:''}</td><td>${esc(l.vers)}</td><td>${eur(l.capR)}</td><td>${eurm(l.W)}${l.revSub?`<span class="sub">${esc(l.revSub)}</span>`:''}</td></tr>`).join('')}
-    <tr class="total"><td>TOTAL</td><td>${esc(d.totVers)}</td><td>${eur(d.totCap)}</td><td>${eurm(d.totW)}</td></tr></tbody></table></div>
-    <div class="args">${argsLines(c,d.totW).map(s=>`<div>${esc(s)}</div>`).join('')}</div>`;
+  el.innerHTML=chiffreeHTML(c,ctx);
+}
+/* ================= impression ================= */
+function printStudy(which){
+  const c=cur();if(!c)return;const ctx=ctxOf(c);if(ctx.errs.length||!c.levers.length)return;
+  const date=new Date().toLocaleDateString('fr-FR',{day:'numeric',month:'long',year:'numeric'});
+  const page=inner=>`<section class="ppage"><header class="phead"><span>${esc(c.nom||'')}</span><span>${date}</span></header><div class="slide">${inner}</div></section>`;
+  const pages=[];if(which!=='tri')pages.push(page(chiffreeHTML(c,ctx)));if(which!=='chiffree')pages.push(page(triHTML(c,ctx)));
+  const pa=$('printArea');pa.innerHTML=pages.join('');
+  document.body.classList.add('printing');
+  const done=()=>{document.body.classList.remove('printing');pa.innerHTML='';window.removeEventListener('afterprint',done);};
+  window.addEventListener('afterprint',done);
+  setTimeout(()=>window.print(),50);
 }
 
 /* ================= tab: trois solutions ================= */
@@ -1196,11 +1303,11 @@ function renderTri(c,ctx,body){
       <div class="field"><label for="tp1">Solution 1 : part de la capacité</label><div class="inp"><input id="tp1" type="text" inputmode="decimal" value="${esc(T.pct1)}"><span class="u">%</span></div></div>
       <div class="field"><label for="tp2">Solution 2 si aucun capital</label><div class="inp"><input id="tp2" type="text" inputmode="decimal" value="${esc(T.pct2)}"><span class="u">%</span></div></div>
       <span class="note" id="triMode" style="align-self:center"></span>
-    </div><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button class="btn" type="button" id="triAuto">Reproposer automatiquement</button><span class="msg" id="xMsg2"></span><button class="btn primary" type="button" id="xls2">Télécharger l'étude (Excel)</button></div></div>
+    </div><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><button class="btn" type="button" id="triAuto">Reproposer automatiquement</button>${printBar()}<span class="msg" id="xMsg2"></span><button class="btn primary" type="button" id="xls2">Télécharger l'étude (Excel)</button></div></div>
     <div class="slide" id="triSlide"></div>
     <section class="card"><div class="card-h"><h3>Composer les solutions</h3><span class="note">Cochez les leviers de chaque solution et ajustez les montants ; le revenu se recalcule.</span></div><div class="matrix-w" id="mx"></div></section>
   </div>`;
-  $('xls2').onclick=()=>exportXlsx($('xMsg2'));
+  $('xls2').onclick=()=>exportXlsx($('xMsg2'));bindPrint(body);
   $('tp1').addEventListener('input',e=>{T.pct1=numv(e.target.value);touch();if(T.auto){renderMatrix(c,ctxOf(c));}renderTriOutput(c,ctxOf(c));});
   $('tp2').addEventListener('input',e=>{T.pct2=numv(e.target.value);touch();if(T.auto){renderMatrix(c,ctxOf(c));}renderTriOutput(c,ctxOf(c));});
   $('triAuto').onclick=()=>{T.auto=true;T.rows=null;touch();renderMatrix(c,ctxOf(c));renderTriOutput(c,ctxOf(c));};
@@ -1226,8 +1333,7 @@ function renderTriOutput(c,ctx){
   const tm=$('triMode');if(tm)tm.textContent=c.tript.auto?'Proposition automatique':'Solutions ajustées à la main';
   if(ctx.errs.length){el.innerHTML=`<div class="alert err"><span class="dot"></span><span>${esc(ctx.errs.join(' '))}</span></div>`;return;}
   const tr=triCompute(c,ctx);
-  el.innerHTML=`<h2>Trois solutions</h2><div class="stw"><table class="st tri"><thead><tr><th></th><th>Capacité d'épargne mensuelle</th><th>Capital</th><th>Revenus complémentaires à la retraite</th></tr></thead><tbody>
-    ${tr.map((r,i)=>`<tr><td class="idx">${i+1}</td><td>${r.mensuel>0?eurm(r.mensuel):'/'}</td><td>${r.capital>0?eur(r.capital):'/'}</td><td>${eurm(r.W)}</td></tr>`).join('')}</tbody></table></div>`;
+  el.innerHTML=triHTML(c,ctx);
   tr.forEach((r,s)=>c.levers.forEach(L=>{const sp=$(`rv-${s}-${L.id}`);if(sp){const o=r.cells[L.id];sp.textContent=o?`→ ${eurm(o.W)}`:'';}}));
 }
 
@@ -1269,7 +1375,7 @@ async function exportXlsx(msgEl){
   });
   w1.getRow(r).values=['TOTAL',d.totVers,Math.round(d.totCap),Math.round(d.totW)];body(w1,r,GT,true);w1.getRow(r).getCell(3).numFmt=fmtE;w1.getRow(r).getCell(4).numFmt=fmtM;w1.getRow(r).height=26;
   r+=2;
-  argsLines(c,d.totW).forEach(s=>{w1.mergeCells(r,1,r,4);const cl=w1.getCell(r,1);cl.value='•  '+s;cl.fill={type:'pattern',pattern:'solid',fgColor:{argb:NAVY}};cl.font={color:{argb:WHITE},size:12};cl.alignment={horizontal:'center',vertical:'middle',wrapText:true};w1.getRow(r).height=22;r++;});
+  (showArgs(c)?argsLines(c,d.totW):[]).forEach(s=>{w1.mergeCells(r,1,r,4);const cl=w1.getCell(r,1);cl.value='•  '+s;cl.fill={type:'pattern',pattern:'solid',fgColor:{argb:NAVY}};cl.font={color:{argb:WHITE},size:12};cl.alignment={horizontal:'center',vertical:'middle',wrapText:true};w1.getRow(r).height=22;r++;});
 
   // 2. Trois solutions
   const tr=triCompute(c,ctx);

@@ -304,9 +304,9 @@ details.more summary{cursor:pointer;font-size:13px;color:var(--focus);font-weigh
 @media print{
   @page{size:A4 landscape;margin:12mm}
   :root,:root[data-theme="dark"],:root:not([data-theme="light"]){color-scheme:light;--bg:#fff;--surface:#fff;--ink:#121B2E;--ink-2:#4A5568;--line:#D6DCE5;--navy:#0E1A5C;--navy-ink:#fff;--row1:#DDE3EB;--row2:#CAD2DD;--rowt:#E8ECF1;--focus:#0E1A5C}
-  body.printing{background:#fff!important}
-  body.printing .wrap{display:none!important}
-  body.printing #printArea{display:block!important}
+  body{background:#fff!important}
+  .wrap{display:none!important}
+  #printArea{display:block!important}
   #printArea *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
   .ppage{break-after:page;page-break-after:always;display:flex;flex-direction:column;gap:6mm}
   .ppage:last-child{break-after:auto;page-break-after:auto}
@@ -1283,17 +1283,19 @@ function renderChiffreeTable(c,ctx){
   el.innerHTML=chiffreeHTML(c,ctx);
 }
 /* ================= impression ================= */
-function printStudy(which){
-  const c=cur();if(!c)return;const ctx=ctxOf(c);if(ctx.errs.length||!c.levers.length)return;
+function fillPrint(which){
+  const pa=$('printArea');if(!pa)return;const c=cur();
+  if(!c){pa.innerHTML='';return;}const ctx=ctxOf(c);
+  if(ctx.errs.length||!c.levers.length){pa.innerHTML='<p>Ajoutez des leviers pour imprimer l\'étude.</p>';return;}
   const date=new Date().toLocaleDateString('fr-FR',{day:'numeric',month:'long',year:'numeric'});
   const page=inner=>`<section class="ppage"><header class="phead"><span>${esc(c.nom||'')}</span><span>${date}</span></header><div class="slide">${inner}</div></section>`;
   const pages=[];if(which!=='tri')pages.push(page(chiffreeHTML(c,ctx)));if(which!=='chiffree')pages.push(page(triHTML(c,ctx)));
-  const pa=$('printArea');pa.innerHTML=pages.join('');
-  document.body.classList.add('printing');
-  const done=()=>{document.body.classList.remove('printing');pa.innerHTML='';window.removeEventListener('afterprint',done);};
-  window.addEventListener('afterprint',done);
-  setTimeout(()=>window.print(),50);
+  pa.innerHTML=pages.join('');
 }
+S.printWhich='both';
+function printStudy(which){S.printWhich=which;fillPrint(which);setTimeout(()=>window.print(),150);}
+window.addEventListener('beforeprint',()=>fillPrint(S.printWhich||'both'));
+window.addEventListener('afterprint',()=>{S.printWhich='both';});
 
 /* ================= tab: trois solutions ================= */
 function renderTri(c,ctx,body){
